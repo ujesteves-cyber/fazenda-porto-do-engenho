@@ -38,15 +38,21 @@
         </div>
     </aside>
 
+    <!-- Mobile overlay -->
+    <div class="sidebar-overlay" id="sidebarOverlay" onclick="toggleSidebar()"></div>
+
     <!-- Topbar -->
     <header class="topbar">
         <div class="topbar-left">
+            <button class="hamburger" id="hamburgerBtn" onclick="toggleSidebar()" aria-label="Menu">
+                <span></span><span></span><span></span>
+            </button>
             <img src="{{ url_for('static', filename='logo.jpg') }}" alt="Logo">
             <span class="topbar-title">{% block page_title %}Dashboard{% endblock %}</span>
         </div>
         <div class="topbar-actions">
             <a href="/importar">Importar XLS</a>
-            <a href="/api/export/matrizes.csv">Exportar CSV</a>
+            <a href="/api/export/matrizes.csv" class="hide-mobile">Exportar CSV</a>
             <a href="/logout" class="btn-sair">Sair</a>
         </div>
     </header>
@@ -66,6 +72,17 @@
 
     <script src="{{ url_for('static', filename='js/main.js') }}"></script>
     <script>
+        function toggleSidebar() {
+            document.querySelector('.sidebar').classList.toggle('open');
+            document.getElementById('sidebarOverlay').classList.toggle('open');
+        }
+        // Close sidebar on nav click (mobile)
+        document.querySelectorAll('.sidebar-nav a').forEach(a => {
+            a.addEventListener('click', () => {
+                if (window.innerWidth <= 768) toggleSidebar();
+            });
+        });
+
         // Load rodada name in sidebar
         API.get('/api/rodadas').then(data => {
             if (data && data.length > 0) {
