@@ -1,0 +1,150 @@
+{% extends "base.html" %}
+{% block title %}Dashboard – Porto do Engenho{% endblock %}
+{% block page_title %}Dashboard{% endblock %}
+
+{% block content %}
+<!-- KPIs -->
+<div id="dashRodada" style="margin-bottom:12px;font-size:13px;color:var(--gray60)"></div>
+<div class="kpi-grid" id="kpiGrid">
+    <div class="kpi-card"><div class="kpi-label">ICIAGen Medio</div><div class="kpi-value" id="kpiIcia">-</div></div>
+    <div class="kpi-card"><div class="kpi-label">IDESM Medio</div><div class="kpi-value" id="kpiIdesm">-</div></div>
+    <div class="kpi-card green"><div class="kpi-label">CEIP Certificadas</div><div class="kpi-value" id="kpiCeip">-</div><div class="kpi-sub" id="kpiCeipSub">-</div></div>
+    <div class="kpi-card"><div class="kpi-label">IPP Medio</div><div class="kpi-value" id="kpiIpp">-</div></div>
+    <div class="kpi-card green"><div class="kpi-label">RMat Medio</div><div class="kpi-value" id="kpiRmat">-</div><div class="kpi-sub">kg/vaca/ano</div></div>
+</div>
+
+<div class="grid-2">
+    <!-- ICIAGen por Safra -->
+    <div class="panel">
+        <div class="panel-header"><h2>ICIAGen Médio por Safra de Nascimento</h2></div>
+        <div class="panel-body"><div class="chart-container"><canvas id="chartSafra"></canvas></div></div>
+    </div>
+
+    <!-- Idade do Rebanho -->
+    <div class="panel">
+        <div class="panel-header"><h2>Idade do Rebanho (Ano de Nascimento)</h2></div>
+        <div class="panel-body"><div class="chart-container"><canvas id="chartIdade"></canvas></div></div>
+    </div>
+</div>
+
+<!-- Top 10 -->
+<div class="panel">
+    <div class="panel-header"><h2>Top 10 Matrizes por ICIAGen</h2></div>
+    <div class="panel-body">
+        <table class="data-table">
+            <thead>
+                <tr><th>#</th><th>Animal ID</th><th>Cat.</th><th>ICIAGen</th><th>Deca</th><th>IDESM</th><th>RMat</th><th>CEIP</th></tr>
+            </thead>
+            <tbody id="top10Body"></tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Distribuição Deca -->
+<div class="panel">
+    <div class="panel-header"><h2>Distribuição Deca ICIAGen</h2></div>
+    <div class="panel-body"><div class="chart-container"><canvas id="chartDeca"></canvas></div></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', async () => {
+    // KPIs
+    const kpis = await API.get('/api/dashboard/kpis');
+    if (kpis && !kpis.erro) {
+        document.getElementById('kpiIcia').textContent = formatNum(kpis.iciagen_avg);
+        document.getElementById('dashRodada').innerHTML = `Rodada: <strong>${kpis.rodada}</strong> · ${kpis.total_matrizes} matrizes`;
+        document.getElementById('kpiIdesm').textContent = formatNum(kpis.idesm_avg);
+        document.getElementById('kpiCeip').textContent = kpis.ceip_total;
+        document.getElementById('kpiCeipSub').textContent = `${kpis.ceip_pct}% de ${kpis.total_matrizes}`;
+        document.getElementById('kpiIpp').textContent = formatNum(kpis.ipp_avg, 1) + 'm';
+        document.getElementById('kpiRmat').textContent = formatNum(kpis.rmat_avg);
+    }
+
+    // ICIAGen por Safra
+    const safras = await API.get('/api/dashboard/safras');
+    if (safras && safras.length) {
+        new Chart(document.getElementById('chartSafra'), {
+            type: 'bar',
+            data: {
+                labels: safras.map(s => s.safra),
+                datasets: [{
+                    data: safras.map(s => s.avg_icia),
+                    backgroundColor: safras.map((s, i) => i >= safras.length - 3 ? '#D01B20' : '#1A1A1A'),
+                    borderRadius: 4,
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: { y: { beginAtZero: true, title: { display: true, text: 'ICIAGen' } } },
+                plugins: { tooltip: { callbacks: { label: ctx => `ICIAGen: ${ctx.parsed.y.toFixed(2)}` } } }
+            }
+        });
+    }
+
+    // Idade do Rebanho
+    const idade = await API.get('/api/dashboard/idade');
+    if (idade && idade.length) {
+        new Chart(document.getElementById('chartIdade'), {
+            type: 'bar',
+            data: {
+                labels: idade.map(i => i.ano),
+                datasets: [
+                    { label: 'Matrizes', data: idade.map(i => i.matrizes), backgroundColor: '#D01B20', borderRadius: 4 },
+                    { label: 'Produtos', data: idade.map(i => i.produtos), backgroundColor: '#1A1A1A', borderRadius: 4 },
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: true, position: 'bottom' } },
+                scales: { x: { stacked: true }, y: { stacked: true, title: { display: true, text: 'Animais' } } }
+            }
+        });
+    }
+
+    // Top 10
+    const top10 = await API.get('/api/dashboard/top10');
+    if (top10 && top10.length) {
+        const tbody = document.getElementById('top10Body');
+        tbody.innerHTML = top10.map((r, i) => `
+            <tr>
+                <td>${i + 1}</td>
+                <td class="mono"><a href="/ficha?id=${r.animal_id_enc}">${r.animal_id}</a></td>
+                <td><span class="badge badge-gray">${r.categoria || '-'}</span></td>
+                <td class="mono">${formatNum(r.iciagen)}</td>
+                <td>${decaBadge(r.deca_icia_g)}</td>
+                <td class="mono">${formatNum(r.idesm)}</td>
+                <td class="mono">${formatNum(r.rmat)}</td>
+                <td>${ceipBadge(r.ceip)}</td>
+            </tr>
+        `).join('');
+    }
+
+    // Dist Deca
+    const decas = await API.get('/api/dashboard/dist_deca');
+    if (decas && decas.length) {
+        const colors = { 1: '#1A7A3F', 2: '#1A7A3F', 3: '#2E9E5E', 4: '#2E9E5E', 5: '#CCC', 6: '#CCC', 7: '#E6A817', 8: '#E6A817', 9: '#D01B20', 10: '#D01B20' };
+        new Chart(document.getElementById('chartDeca'), {
+            type: 'bar',
+            data: {
+                labels: decas.map(d => `Deca ${d.deca}`),
+                datasets: [{
+                    data: decas.map(d => d.n),
+                    backgroundColor: decas.map(d => colors[d.deca] || '#CCC'),
+                    borderRadius: 4,
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: { y: { beginAtZero: true, title: { display: true, text: 'Nº animais' } } }
+            }
+        });
+    }
+
+});
+</script>
+{% endblock %}

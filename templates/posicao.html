@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block title %}Posicionamento – Porto do Engenho{% endblock %}
+{% block page_title %}Posicionamento do Rebanho{% endblock %}
+
+{% block content %}
+<!-- Position bars -->
+<div class="panel">
+    <div class="panel-header"><h2>Posicionamento do Rebanho</h2></div>
+    <div class="panel-body" id="posBarras"></div>
+</div>
+
+<div class="grid-2">
+    <!-- Radar -->
+    <div class="panel">
+        <div class="panel-header"><h2>Radar de Posicionamento</h2></div>
+        <div class="panel-body"><div class="chart-container" style="height:350px"><canvas id="chartRadar"></canvas></div></div>
+    </div>
+
+    <!-- ICIAGen por categoria -->
+    <div class="panel">
+        <div class="panel-header"><h2>ICIAGen por Categoria</h2></div>
+        <div class="panel-body"><div class="chart-container" style="height:350px"><canvas id="chartCateg"></canvas></div></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', async () => {
+    const pos = await API.get('/api/posicao');
+    if (!pos || pos.erro) return;
+
+    // Position bars
+    const indicadores = [
+        { nome: 'ICIAGen', perc: pos.perc_icia },
+        { nome: 'IDESM', perc: pos.perc_idesm },
+        { nome: 'CEIP', perc: pos.ceip_pct },
+        { nome: 'Precoces', perc: pos.precoce_pct },
+        { nome: 'RMat', perc: pos.perc_rmat },
+        { nome: 'Genotipadas', perc: pos.geno_pct },
+    ];
+
+    let barHtml = '<div style="display:grid;gap:12px">';
+    indicadores.forEach(ind => {
+        const color = ind.perc <= 30 ? 'var(--ok)' : ind.perc >= 70 ? 'var(--red)' : 'var(--gray40)';
+        const barWidth = Math.max(5, Math.min(ind.perc, 100));
+        barHtml += `<div style="display:flex;align-items:center;gap:16px">
+            <div style="width:120px;font-weight:600;font-size:13px">${ind.nome}</div>
+            <div style="flex:1;height:24px;background:var(--gray10);border-radius:4px;overflow:hidden;position:relative">
+                <div style="height:100%;width:${barWidth}%;background:${color};border-radius:4px;transition:width 0.5s"></div>
+            </div>
+            <div style="width:60px;text-align:right;font-family:'DM Mono',monospace;font-size:14px;font-weight:600;color:${color}">${formatNum(ind.perc, 1)}%</div>
+        </div>`;
+    });
+    barHtml += '</div>';
+    document.getElementById('posBarras').innerHTML = barHtml;
+
+    // Radar
+    const radarLabels = ['ICIAGen', 'IDESM', 'CEIP', 'Precoces', 'RMat', 'Genotipadas'];
+    const radarValues = [
+        100 - pos.perc_icia,
+        100 - pos.perc_idesm,
+        pos.ceip_pct,
+        pos.precoce_pct,
+        100 - pos.perc_rmat,
+        pos.geno_pct,
+    ];
+
+    new Chart(document.getElementById('chartRadar'), {
+        type: 'radar',
+        data: {
+            labels: radarLabels,
+            datasets: [{
+                label: 'Fazenda 167',
+                data: radarValues,
+                borderColor: '#D01B20',
+                backgroundColor: 'rgba(208,27,32,0.15)',
+                borderWidth: 2,
+                pointRadius: 4,
+                pointBackgroundColor: '#D01B20',
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: { r: { beginAtZero: true, max: 100, ticks: { stepSize: 20 } } },
+            plugins: { legend: { display: true, position: 'bottom' } }
+        }
+    });
+
+    // ICIAGen por Categoria
+    if (pos.categorias && pos.categorias.length) {
+        new Chart(document.getElementById('chartCateg'), {
+            type: 'bar',
+            data: {
+                labels: pos.categorias.map(c => c.categoria),
+                datasets: [{
+                    data: pos.categorias.map(c => c.avg_icia),
+                    backgroundColor: ['#1A1A1A', '#D01B20', '#1A7A3F', '#E6A817'],
+                    borderRadius: 4,
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: { y: { beginAtZero: true, title: { display: true, text: 'ICIAGen Médio' } } }
+            }
+        });
+    }
+});
+</script>
+{% endblock %}

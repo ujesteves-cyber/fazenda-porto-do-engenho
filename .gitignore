@@ -1,0 +1,10 @@
+data/fazenda167.db
+uploads/
+.env
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+venv/
+cookies.txt
+.claude/

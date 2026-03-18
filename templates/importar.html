@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+{% block title %}Importar Rodada – Porto do Engenho{% endblock %}
+{% block page_title %}Importar Rodada{% endblock %}
+
+{% block content %}
+<div class="grid-2">
+    <!-- Upload form -->
+    <div class="panel">
+        <div class="panel-header"><h2>Nova Importação</h2></div>
+        <div class="panel-body">
+            <form id="importForm" enctype="multipart/form-data">
+                <div style="margin-bottom:16px">
+                    <label style="display:block;font-size:12px;color:var(--gray60);margin-bottom:6px;font-weight:600">Nome da Rodada *</label>
+                    <input type="text" name="nome_rodada" required placeholder="ex: R4 · Out/2025"
+                           style="width:100%;padding:10px 14px;border:1px solid var(--gray20);border-radius:6px;font-family:'Barlow',sans-serif;font-size:14px">
+                </div>
+                <div style="margin-bottom:16px">
+                    <label style="display:block;font-size:12px;color:var(--gray60);margin-bottom:6px;font-weight:600">Arquivo de Matrizes (.xls)</label>
+                    <input type="file" name="arquivo_mat" accept=".xls,.xlsx" style="font-size:13px">
+                    <div style="font-size:11px;color:var(--gray40);margin-top:4px">Ex: 167_avg_matrizes.xls</div>
+                </div>
+                <div style="margin-bottom:16px">
+                    <label style="display:block;font-size:12px;color:var(--gray60);margin-bottom:6px;font-weight:600">Arquivos de Safra (.xls) — selecione um ou mais</label>
+                    <input type="file" name="arquivo_saf" accept=".xls,.xlsx" multiple style="font-size:13px">
+                    <div style="font-size:11px;color:var(--gray40);margin-top:4px">Ex: 167_avg_safra2023.xls, 167_avg_safra2024.xls (segure Ctrl para selecionar vários)</div>
+                </div>
+                <button type="submit" class="btn btn-red">Importar</button>
+            </form>
+
+            <div id="importProgress" style="display:none;margin-top:16px">
+                <div class="progress-bar"><div class="fill" id="progressFill" style="width:0%"></div></div>
+                <p id="progressText" style="font-size:12px;color:var(--gray40)">Processando...</p>
+            </div>
+
+            <div id="importResult" style="display:none;margin-top:16px" class="flash success"></div>
+            <div id="importError" style="display:none;margin-top:16px" class="flash error"></div>
+        </div>
+    </div>
+
+    <!-- Rodadas list -->
+    <div class="panel">
+        <div class="panel-header"><h2>Rodadas Importadas</h2></div>
+        <div class="panel-body">
+            <table class="data-table">
+                <thead><tr><th>Rodada</th><th>Data</th><th>Matrizes</th><th>Produtos</th><th></th></tr></thead>
+                <tbody id="rodadasBody"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function loadRodadas() {
+    const data = await API.get('/api/rodadas');
+    if (!data) return;
+    const tbody = document.getElementById('rodadasBody');
+    tbody.innerHTML = data.map(r => `
+        <tr>
+            <td><strong>${r.nome}</strong></td>
+            <td class="mono" style="font-size:12px">${r.data_import || '-'}</td>
+            <td class="mono">${r.n_matrizes}</td>
+            <td class="mono">${r.n_produtos}</td>
+            <td><button class="btn btn-outline btn-sm" onclick="deleteRodada(${r.id}, '${r.nome}')">Excluir</button></td>
+        </tr>
+    `).join('');
+}
+
+async function deleteRodada(id, nome) {
+    if (!confirm(`Excluir a rodada "${nome}" e todos os dados associados?`)) return;
+    await API.del(`/api/rodadas/${id}`);
+    loadRodadas();
+}
+
+document.getElementById('importForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const form = e.target;
+    const fd = new FormData(form);
+
+    document.getElementById('importProgress').style.display = 'block';
+    document.getElementById('importResult').style.display = 'none';
+    document.getElementById('importError').style.display = 'none';
+    document.getElementById('progressFill').style.width = '30%';
+
+    try {
+        const res = await fetch('/api/importar', { method: 'POST', body: fd });
+        const data = await res.json();
+
+        document.getElementById('progressFill').style.width = '100%';
+
+        if (data.ok) {
+            document.getElementById('importResult').style.display = 'block';
+            document.getElementById('importResult').textContent =
+                `Importação concluída! ${data.n_matrizes} matrizes e ${data.n_produtos} produtos importados.`;
+            form.reset();
+            loadRodadas();
+        } else {
+            document.getElementById('importError').style.display = 'block';
+            document.getElementById('importError').textContent = data.erro || 'Erro na importação';
+        }
+    } catch (err) {
+        document.getElementById('importError').style.display = 'block';
+        document.getElementById('importError').textContent = 'Erro de conexão';
+    }
+
+    setTimeout(() => {
+        document.getElementById('importProgress').style.display = 'none';
+    }, 2000);
+});
+
+loadRodadas();
+</script>
+{% endblock %}

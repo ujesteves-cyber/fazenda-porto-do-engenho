@@ -1,0 +1,185 @@
+{% extends "base.html" %}
+{% block title %}Safras / Produtos – Porto do Engenho{% endblock %}
+{% block page_title %}Safras / Produtos{% endblock %}
+
+{% block content %}
+<div id="safraInfo" style="margin-bottom:20px;font-size:13px;color:var(--gray60)"></div>
+
+<!-- Safra year tabs -->
+<div id="safraTabs" style="display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap"></div>
+
+<!-- Safra detail -->
+<div id="safraDetail" style="display:none">
+    <div class="kpi-grid" id="safraKpis"></div>
+
+    <div class="filters">
+        <input type="text" id="fBusca" placeholder="Buscar produto, touro, mae..." style="width:220px">
+        <select id="fSexo"><option value="">Sexo</option><option value="M">Machos</option><option value="F">Femeas</option></select>
+        <select id="fTouro"><option value="">Touro (Pai)</option></select>
+        <select id="fCeip"><option value="">CEIP</option><option value="1">Somente CEIP</option></select>
+        <button class="btn btn-outline btn-sm" onclick="loadSafra(currentAno, 0)">Filtrar</button>
+        <button class="btn btn-outline btn-sm" onclick="limparFiltrosSafra()">Limpar</button>
+    </div>
+
+    <div class="panel">
+        <div class="panel-body" style="overflow-x:auto">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th class="sortable" onclick="setOrder('produto_id')">Produto <span class="sort-icon" data-col="produto_id"></span></th>
+                        <th>Sexo</th>
+                        <th class="sortable" onclick="setOrder('data_nasc')">Nasc. <span class="sort-icon" data-col="data_nasc"></span></th>
+                        <th>Touro (Pai)</th>
+                        <th>Mae</th>
+                        <th>Avo Mat.</th>
+                        <th>PN</th>
+                        <th>P.Desm</th>
+                        <th>GND aj</th>
+                        <th class="sortable" onclick="setOrder('iciagen')">ICIAGen <span class="sort-icon" data-col="iciagen"></span></th>
+                        <th>Deca</th>
+                        <th class="sortable" onclick="setOrder('idesm')">IDESM <span class="sort-icon" data-col="idesm"></span></th>
+                        <th class="sortable" onclick="setOrder('rmat')">RMat <span class="sort-icon" data-col="rmat"></span></th>
+                        <th>CEIP</th>
+                    </tr>
+                </thead>
+                <tbody id="safraBody"></tbody>
+            </table>
+            <div class="pagination" id="safraPag"></div>
+        </div>
+    </div>
+</div>
+
+<div id="safraEmpty" style="text-align:center;padding:60px;color:var(--gray40)">
+    Carregando safras...
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let currentAno = null;
+let currentOrder = 'iciagen';
+const LIMIT = 20;
+
+function setOrder(o) {
+    currentOrder = o;
+    loadSafra(currentAno, 0);
+    document.querySelectorAll('.sort-icon').forEach(el => {
+        el.textContent = el.dataset.col === o ? '▼' : '';
+    });
+}
+
+function limparFiltrosSafra() {
+    document.querySelectorAll('.filters select').forEach(s => s.value = '');
+    document.querySelectorAll('.filters input').forEach(i => i.value = '');
+    loadSafra(currentAno, 0);
+}
+
+async function loadSafras() {
+    const data = await API.get('/api/safras');
+    if (!data || !data.rodada) {
+        document.getElementById('safraEmpty').textContent = 'Nenhuma rodada importada.';
+        return;
+    }
+
+    document.getElementById('safraInfo').innerHTML =
+        `Rodada: <strong>${data.rodada.nome}</strong> · ${data.rodada.n_produtos} produtos`;
+
+    if (!data.anos.length) {
+        document.getElementById('safraEmpty').textContent = 'Nenhum produto importado nesta rodada.';
+        return;
+    }
+
+    document.getElementById('safraEmpty').style.display = 'none';
+    const tabs = document.getElementById('safraTabs');
+    tabs.innerHTML = data.anos.map(a => `
+        <button class="btn btn-outline" id="tab-${a.safra_ano}" onclick="selectSafra('${a.safra_ano}')">
+            Safra ${a.safra_ano}
+            <span style="font-family:'DM Mono',monospace;font-size:11px;margin-left:4px;opacity:0.6">(${a.n})</span>
+        </button>
+    `).join('');
+
+    // Auto-select first
+    selectSafra(data.anos[0].safra_ano);
+}
+
+function selectSafra(ano) {
+    currentAno = ano;
+    document.querySelectorAll('#safraTabs button').forEach(b => {
+        b.classList.remove('btn-red');
+        b.classList.add('btn-outline');
+    });
+    const tab = document.getElementById(`tab-${ano}`);
+    if (tab) { tab.classList.remove('btn-outline'); tab.classList.add('btn-red'); }
+    document.getElementById('safraDetail').style.display = 'block';
+    loadSafra(ano, 0);
+    loadTouros(ano);
+}
+
+async function loadSafra(ano, offset) {
+    const params = new URLSearchParams();
+    params.set('limit', LIMIT);
+    params.set('offset', offset);
+    params.set('order', currentOrder);
+    const q = document.getElementById('fBusca').value.trim();
+    if (q) params.set('q', q);
+    const sexo = document.getElementById('fSexo').value;
+    if (sexo) params.set('sexo', sexo);
+    const touro = document.getElementById('fTouro').value;
+    if (touro) params.set('touro', touro);
+    const ceip = document.getElementById('fCeip').value;
+    if (ceip) params.set('ceip', ceip);
+
+    const data = await API.get(`/api/safras/${ano}?${params}`);
+    if (!data) return;
+
+    // KPIs
+    const kpiDiv = document.getElementById('safraKpis');
+    kpiDiv.innerHTML = `
+        <div class="kpi-card"><div class="kpi-label">Total Safra ${ano}</div><div class="kpi-value">${data.total}</div></div>
+    `;
+
+    // Table
+    const tbody = document.getElementById('safraBody');
+    tbody.innerHTML = data.data.map((p, i) => `
+        <tr>
+            <td>${offset + i + 1}</td>
+            <td class="mono"><strong>${p.produto_id}</strong></td>
+            <td>${p.sexo === 'M' ? '<span style="color:var(--black)">&#9794;</span>' : '<span style="color:var(--red)">&#9792;</span>'}</td>
+            <td class="mono" style="font-size:12px">${p.data_nasc || '-'}</td>
+            <td style="font-size:12px">${p.touro || '-'}</td>
+            <td class="mono" style="font-size:12px">${p.mae_id ? '<a href="/ficha?id=' + encodeAnimalId(p.mae_id) + '">' + p.mae_id + '</a>' : '-'}</td>
+            <td style="font-size:12px">${p.avo_materno || '-'}</td>
+            <td class="mono">${p.pn ? formatNum(p.pn, 1) : '-'}</td>
+            <td class="mono">${p.peso_desm ? formatNum(p.peso_desm, 0) : '-'}</td>
+            <td class="mono">${p.gnd_aj ? formatNum(p.gnd_aj, 1) : '-'}</td>
+            <td class="mono"><strong>${formatNum(p.iciagen)}</strong></td>
+            <td>${decaBadge(p.deca_iciagen)}</td>
+            <td class="mono">${formatNum(p.idesm)}</td>
+            <td class="mono">${formatNum(p.rmat)}</td>
+            <td>${p.ceip ? '<span class="badge badge-green">CEIP</span>' : ''}</td>
+        </tr>
+    `).join('');
+
+    // Pagination
+    const totalPages = Math.ceil(data.total / LIMIT);
+    const currentPage = Math.floor(offset / LIMIT) + 1;
+    document.getElementById('safraPag').innerHTML = `
+        <button ${offset === 0 ? 'disabled' : ''} onclick="loadSafra('${ano}',${offset - LIMIT})">Anterior</button>
+        <span class="current">Pg ${currentPage} de ${totalPages}</span>
+        <button ${offset + LIMIT >= data.total ? 'disabled' : ''} onclick="loadSafra('${ano}',${offset + LIMIT})">Proxima</button>
+    `;
+}
+
+async function loadTouros(ano) {
+    const data = await API.get(`/api/safras/${ano}?limit=500`);
+    if (!data) return;
+    const touros = [...new Set(data.data.map(p => p.touro).filter(t => t))].sort();
+    const sel = document.getElementById('fTouro');
+    sel.innerHTML = '<option value="">Touro (Pai)</option>' +
+        touros.map(t => `<option value="${t}">${t}</option>`).join('');
+}
+
+loadSafras();
+</script>
+{% endblock %}

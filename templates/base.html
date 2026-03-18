@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Porto do Engenho{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+    {% block head %}{% endblock %}
+</head>
+<body>
+    <!-- Sidebar -->
+    <aside class="sidebar">
+        <div class="sidebar-logo">
+            <img src="{{ url_for('static', filename='logo.jpg') }}" alt="Porto do Engenho">
+        </div>
+        <div class="sidebar-rodada" id="sidebarRodada">
+            <span class="dot-live"></span>
+            <span id="rodadaNome">Carregando...</span>
+        </div>
+        <nav class="sidebar-nav">
+            <a href="/"><span class="icon">▦</span> <span>Dashboard</span></a>
+            <a href="/indices"><span class="icon">◎</span> <span>Índices Principais</span></a>
+            <a href="/posicao"><span class="icon">⊕</span> <span>Posicionamento</span></a>
+            <a href="/matrizes"><span class="icon">♀</span> <span>Matrizes Ativas</span></a>
+            <a href="/safras"><span class="icon">★</span> <span>Safras / Produtos</span></a>
+            <a href="/ficha"><span class="icon">◎</span> <span>Ficha do Animal</span></a>
+            <a href="/rebanho"><span class="icon">▤</span> <span>Rebanho</span></a>
+            <a href="/evolucao"><span class="icon">~</span> <span>Evolucao do Rebanho</span></a>
+            <a href="/touros"><span class="icon">♂</span> <span>Reprodutores</span></a>
+            <a href="/estoque"><span class="icon">$</span> <span>Estoque de Touros</span></a>
+            <a href="/alertas"><span class="icon">&#9888;</span> <span>Alertas IA</span></a>
+            <a href="/importar"><span class="icon">↑</span> <span>Importar Rodada</span></a>
+        </nav>
+        <div class="sidebar-footer">
+            CIA de Melhoramento<br>
+            Nelore Provado · Cariacica-ES
+        </div>
+    </aside>
+
+    <!-- Topbar -->
+    <header class="topbar">
+        <div class="topbar-left">
+            <img src="{{ url_for('static', filename='logo.jpg') }}" alt="Logo">
+            <span class="topbar-title">{% block page_title %}Dashboard{% endblock %}</span>
+        </div>
+        <div class="topbar-actions">
+            <a href="/importar">Importar XLS</a>
+            <a href="/api/export/matrizes.csv">Exportar CSV</a>
+            <a href="/logout" class="btn-sair">Sair</a>
+        </div>
+    </header>
+
+    <!-- Main content -->
+    <main class="main">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            {% for cat, msg in messages %}
+                <div class="flash {{ cat }}">{{ msg }}</div>
+            {% endfor %}
+        {% endif %}
+        {% endwith %}
+
+        {% block content %}{% endblock %}
+    </main>
+
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+    <script>
+        // Load rodada name in sidebar
+        API.get('/api/rodadas').then(data => {
+            if (data && data.length > 0) {
+                document.getElementById('rodadaNome').textContent = data[0].nome;
+            } else {
+                document.getElementById('rodadaNome').textContent = 'Nenhuma rodada';
+            }
+        });
+    </script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

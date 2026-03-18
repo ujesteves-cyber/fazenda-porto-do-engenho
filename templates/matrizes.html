@@ -1,0 +1,186 @@
+{% extends "base.html" %}
+{% block title %}Matrizes Ativas – Porto do Engenho{% endblock %}
+{% block page_title %}Matrizes Ativas{% endblock %}
+
+{% block content %}
+<!-- KPIs -->
+<div class="kpi-grid" id="matKpis">
+    <div class="kpi-card"><div class="kpi-label">Total Matrizes</div><div class="kpi-value" id="mkTotal">-</div></div>
+    <div class="kpi-card"><div class="kpi-label">IPP Médio</div><div class="kpi-value" id="mkIpp">-</div></div>
+    <div class="kpi-card"><div class="kpi-label">CEIP</div><div class="kpi-value" id="mkCeip">-</div></div>
+    <div class="kpi-card"><div class="kpi-label">Precoces</div><div class="kpi-value" id="mkPrecoce">-</div></div>
+    <div class="kpi-card"><div class="kpi-label">Genotipadas</div><div class="kpi-value" id="mkGeno">-</div></div>
+</div>
+
+<!-- Filters -->
+<div class="filters" style="flex-wrap:wrap">
+    <input type="text" id="fSearch" placeholder="Buscar animal ou touro..." style="width:200px">
+    <select id="fCateg"><option value="">Categoria</option><option value="M">M - Multípara</option><option value="N">N - Novilha</option><option value="P">P - Primípara</option><option value="S">S - Secundípara</option></select>
+    <select id="fCeip"><option value="">CEIP</option><option value="1">Sim</option><option value="0">Nao</option></select>
+    <select id="fDeca"><option value="">Deca</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5+</option></select>
+    <select id="fPrecoce"><option value="">Precoce</option><option value="1">Sim</option><option value="0">Nao</option></select>
+    <select id="fGeno"><option value="">Genotipada</option><option value="1">Sim</option><option value="0">Nao</option></select>
+    <select id="fAtivo"><option value="">Ativas</option><option value="todos">Todas (ativas + inativas)</option><option value="0">Somente Inativas</option></select>
+    <select id="fTouroPai"><option value="">Touro Pai</option></select>
+    <select id="fSafra"><option value="">Safra</option></select>
+</div>
+<div class="filters" style="margin-top:-12px">
+    <input type="number" id="fIciaMin" placeholder="ICIAGen ≥" step="0.1" style="width:100px">
+    <input type="number" id="fIdesmMin" placeholder="IDESM ≥" step="0.1" style="width:100px">
+    <input type="number" id="fRmatMin" placeholder="RMat ≥" step="0.1" style="width:100px">
+    <button class="btn btn-red btn-sm" onclick="loadMatrizes(0)">Filtrar</button>
+    <button class="btn btn-outline btn-sm" onclick="limparFiltros()">Limpar</button>
+    <a href="/api/export/matrizes.csv" class="btn btn-outline btn-sm">Exportar CSV</a>
+</div>
+
+<!-- Table -->
+<div class="panel">
+    <div class="panel-body">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th class="sortable" onclick="setOrder('animal_id')">Animal ID <span class="sort-icon" data-col="animal_id"></span></th>
+                    <th class="sortable" onclick="setOrder('categoria')">Cat. <span class="sort-icon" data-col="categoria"></span></th>
+                    <th>Touro Pai</th>
+                    <th>Safra</th>
+                    <th class="sortable" onclick="setOrder('iciagen')">ICIAGen <span class="sort-icon" data-col="iciagen"></span></th>
+                    <th>Deca G</th>
+                    <th>Deca F</th>
+                    <th class="sortable" onclick="setOrder('idesm')">IDESM <span class="sort-icon" data-col="idesm"></span></th>
+                    <th class="sortable" onclick="setOrder('rmat')">RMat <span class="sort-icon" data-col="rmat"></span></th>
+                    <th class="sortable" onclick="setOrder('ipp')">IPP <span class="sort-icon" data-col="ipp"></span></th>
+                    <th class="sortable" onclick="setOrder('pv')">PV <span class="sort-icon" data-col="pv"></span></th>
+                    <th>Precoce</th>
+                    <th>CEIP</th>
+                </tr>
+            </thead>
+            <tbody id="matBody"></tbody>
+        </table>
+        <div class="pagination" id="matPag"></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let currentOffset = 0;
+let currentOrder = 'iciagen';
+const LIMIT = 10;
+
+function setOrder(o) {
+    currentOrder = o;
+    loadMatrizes(0);
+    // Update sort indicators
+    document.querySelectorAll('.sort-icon').forEach(el => {
+        el.textContent = el.dataset.col === o ? '▼' : '';
+    });
+}
+
+async function loadMatrizes(offset) {
+    currentOffset = offset;
+    const params = new URLSearchParams();
+    params.set('limit', LIMIT);
+    params.set('offset', offset);
+    params.set('order', currentOrder);
+
+    const fields = {
+        'ceip': 'fCeip', 'deca': 'fDeca', 'categ': 'fCateg',
+        'precoce': 'fPrecoce', 'genotipada': 'fGeno',
+        'touro_pai': 'fTouroPai', 'safra': 'fSafra', 'ativo': 'fAtivo',
+    };
+    for (const [param, id] of Object.entries(fields)) {
+        const v = document.getElementById(id).value;
+        if (v) params.set(param, v);
+    }
+    const iciaMin = document.getElementById('fIciaMin').value;
+    if (iciaMin) params.set('iciagen_min', iciaMin);
+    const idesmMin = document.getElementById('fIdesmMin').value;
+    if (idesmMin) params.set('idesm_min', idesmMin);
+    const rmatMin = document.getElementById('fRmatMin').value;
+    if (rmatMin) params.set('rmat_min', rmatMin);
+    const q = document.getElementById('fSearch').value.trim();
+    if (q) params.set('q', q);
+
+    const data = await API.get(`/api/matrizes?${params}`);
+    if (!data) return;
+
+    document.getElementById('mkTotal').textContent = data.total;
+
+    const tbody = document.getElementById('matBody');
+    tbody.innerHTML = data.data.map((r, i) => `
+        <tr>
+            <td>${offset + i + 1}</td>
+            <td class="mono"><a href="/ficha?id=${r.animal_id_enc}">${r.animal_id}</a>${r.ativo === 0 ? ' <span class="badge badge-gray" style="font-size:9px">INATIVO</span>' : ''}</td>
+            <td><span class="badge badge-gray">${r.categoria || '-'}</span></td>
+            <td style="font-size:12px">${r.touro_pai || '-'}</td>
+            <td class="mono">${r.safra || '-'}</td>
+            <td class="mono"><strong>${formatNum(r.iciagen)}</strong></td>
+            <td>${decaBadge(r.deca_icia_g)}</td>
+            <td>${decaBadge(r.deca_icia_f)}</td>
+            <td class="mono">${formatNum(r.idesm)}</td>
+            <td class="mono">${formatNum(r.rmat)}</td>
+            <td class="mono">${r.ipp ? formatNum(r.ipp, 1) + 'm' : '-'}</td>
+            <td class="mono">${r.pv ? formatNum(r.pv, 0) + 'kg' : '-'}</td>
+            <td>${precBadge(r.precoce)}</td>
+            <td>${ceipBadge(r.ceip)}</td>
+        </tr>
+    `).join('');
+
+    // Pagination
+    const totalPages = Math.ceil(data.total / LIMIT);
+    const currentPage = Math.floor(offset / LIMIT) + 1;
+    let pagHtml = `<button ${offset === 0 ? 'disabled' : ''} onclick="loadMatrizes(${offset - LIMIT})">Anterior</button>`;
+    pagHtml += `<span class="current">Página ${currentPage} de ${totalPages}</span>`;
+    pagHtml += `<button ${offset + LIMIT >= data.total ? 'disabled' : ''} onclick="loadMatrizes(${offset + LIMIT})">Próxima</button>`;
+    document.getElementById('matPag').innerHTML = pagHtml;
+}
+
+// Load KPI extras
+async function loadKpis() {
+    const kpis = await API.get('/api/dashboard/kpis');
+    if (kpis && !kpis.erro) {
+        document.getElementById('mkIpp').textContent = formatNum(kpis.ipp_avg, 1) + 'm';
+        document.getElementById('mkCeip').textContent = `${kpis.ceip_total} (${kpis.ceip_pct}%)`;
+    }
+    const comp = await API.get('/api/dashboard/composicao');
+    if (comp) {
+        let precoces = 0, geno = 0;
+        comp.forEach(c => { precoces += c.precoces || 0; geno += c.genotipadas || 0; });
+        document.getElementById('mkPrecoce').textContent = precoces;
+        document.getElementById('mkGeno').textContent = geno;
+    }
+}
+
+function limparFiltros() {
+    document.querySelectorAll('.filters select').forEach(s => s.value = '');
+    document.querySelectorAll('.filters input').forEach(i => i.value = '');
+    loadMatrizes(0);
+}
+
+async function loadFiltros() {
+    const data = await API.get('/api/filtros');
+    if (!data) return;
+
+    const selTouro = document.getElementById('fTouroPai');
+    data.touros.forEach(t => {
+        const opt = document.createElement('option');
+        opt.value = t;
+        opt.textContent = t;
+        selTouro.appendChild(opt);
+    });
+
+    const selSafra = document.getElementById('fSafra');
+    data.safras.forEach(s => {
+        const opt = document.createElement('option');
+        opt.value = s;
+        opt.textContent = s;
+        selSafra.appendChild(opt);
+    });
+}
+
+loadMatrizes(0);
+loadKpis();
+loadFiltros();
+</script>
+{% endblock %}

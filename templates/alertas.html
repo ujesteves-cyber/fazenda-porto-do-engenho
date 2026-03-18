@@ -1,0 +1,292 @@
+{% extends "base.html" %}
+{% block title %}Alertas Inteligentes{% endblock %}
+{% block page_title %}Alertas Inteligentes{% endblock %}
+
+{% block content %}
+<style>
+    :root {
+        --ai-primary: #D01B20;
+        --ai-primary-soft: rgba(208,27,32,.12);
+        --ai-gold: #C8962E;
+        --ai-gold-soft: rgba(200,150,46,.12);
+        --ai-blue: #2B6CB0;
+        --ai-blue-soft: rgba(43,108,176,.12);
+        --ai-green: #1A7A3F;
+        --ai-surface: #111111;
+        --ai-surface2: #1A1A1A;
+        --ai-surface3: #222222;
+        --ai-border: #2A2A2A;
+        --ai-text: #E8E8E8;
+        --ai-text2: #999999;
+        --ai-text3: #666666;
+    }
+
+    .alertas-header { display:flex; justify-content:space-between; align-items:flex-start; gap:1.5rem; flex-wrap:wrap; margin-bottom:1.5rem; }
+
+    .alertas-config { background:var(--ai-surface2); border:1px solid var(--ai-border); border-radius:8px; padding:1.2rem; flex:1; min-width:320px; }
+    .alertas-config h3 { color:var(--ai-text2); font-size:.78rem; margin-bottom:.8rem; text-transform:uppercase; letter-spacing:.08em; font-weight:500; }
+    .config-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(180px,1fr)); gap:.6rem; }
+    .config-item { display:flex; flex-direction:column; gap:.25rem; }
+    .config-item label { font-size:.72rem; color:var(--ai-text3); font-weight:500; letter-spacing:.03em; }
+    .config-item input { background:var(--ai-surface); border:1px solid var(--ai-border); color:var(--ai-text); padding:.45rem .6rem; border-radius:4px; font-size:.85rem; width:100%; transition:border-color .2s; }
+    .config-item input:focus { border-color:var(--ai-primary); outline:none; }
+
+    .btn-gerar { background:var(--ai-primary); color:#fff; border:none; padding:.75rem 2rem; border-radius:6px; font-size:.9rem; font-weight:600; cursor:pointer; display:flex; align-items:center; gap:.5rem; transition:all .2s; letter-spacing:.02em; }
+    .btn-gerar:hover { background:#B01518; box-shadow:0 2px 12px rgba(208,27,32,.3); }
+    .btn-gerar:disabled { opacity:.5; cursor:wait; }
+    .btn-gerar .spinner { display:none; width:16px; height:16px; border:2px solid rgba(255,255,255,.3); border-top-color:#fff; border-radius:50%; animation:spin .8s linear infinite; }
+    .btn-gerar.loading .spinner { display:block; }
+    .btn-gerar.loading .btn-text { display:none; }
+    @keyframes spin { to { transform:rotate(360deg); } }
+
+    .resumo-kpis { display:grid; grid-template-columns:repeat(3,1fr); gap:1rem; margin-bottom:1.5rem; }
+    .kpi-alerta { background:var(--ai-surface2); border:1px solid var(--ai-border); border-radius:8px; padding:1.2rem 1.4rem; text-align:center; position:relative; overflow:hidden; }
+    .kpi-alerta::before { content:''; position:absolute; top:0; left:0; right:0; height:3px; }
+    .kpi-alerta.critico::before { background:var(--ai-primary); }
+    .kpi-alerta.atencao::before { background:var(--ai-gold); }
+    .kpi-alerta.monitorar::before { background:var(--ai-blue); }
+    .kpi-alerta .numero { font-size:2.2rem; font-weight:700; font-variant-numeric:tabular-nums; }
+    .kpi-alerta.critico .numero { color:var(--ai-primary); }
+    .kpi-alerta.atencao .numero { color:var(--ai-gold); }
+    .kpi-alerta.monitorar .numero { color:var(--ai-blue); }
+    .kpi-alerta .label { color:var(--ai-text2); font-size:.75rem; text-transform:uppercase; letter-spacing:.08em; font-weight:500; margin-top:.2rem; }
+
+    .resumo-exec { background:var(--ai-surface2); border:1px solid var(--ai-border); border-left:3px solid var(--ai-primary); border-radius:8px; padding:1.5rem; margin-bottom:1.5rem; }
+    .resumo-exec h3 { color:var(--ai-text); margin-bottom:.8rem; font-size:.9rem; font-weight:600; text-transform:uppercase; letter-spacing:.05em; }
+    .resumo-exec p { color:var(--ai-text2); line-height:1.75; font-size:.9rem; }
+
+    .filtros-alertas { display:flex; gap:.4rem; margin-bottom:1.2rem; flex-wrap:wrap; }
+    .filtro-btn { background:var(--ai-surface2); border:1px solid var(--ai-border); color:var(--ai-text3); padding:.4rem 1rem; border-radius:4px; cursor:pointer; font-size:.78rem; font-weight:500; transition:all .2s; text-transform:uppercase; letter-spacing:.05em; }
+    .filtro-btn:hover { color:var(--ai-text); border-color:var(--ai-text3); }
+    .filtro-btn.active { color:#fff; }
+    .filtro-btn[data-filtro="todos"].active { background:var(--ai-surface3); border-color:var(--ai-text3); color:var(--ai-text); }
+    .filtro-btn[data-filtro="critico"].active { background:var(--ai-primary); border-color:var(--ai-primary); }
+    .filtro-btn[data-filtro="atencao"].active { background:var(--ai-gold); border-color:var(--ai-gold); color:#111; }
+    .filtro-btn[data-filtro="monitorar"].active { background:var(--ai-blue); border-color:var(--ai-blue); }
+
+    .alertas-lista { display:flex; flex-direction:column; gap:.6rem; }
+    .alerta-card { background:var(--ai-surface2); border:1px solid var(--ai-border); border-radius:8px; padding:1.1rem 1.3rem; cursor:pointer; transition:all .15s; position:relative; }
+    .alerta-card:hover { border-color:var(--ai-text3); }
+    .alerta-card::before { content:''; position:absolute; left:0; top:0; bottom:0; width:3px; border-radius:8px 0 0 8px; }
+    .alerta-card.critico::before { background:var(--ai-primary); }
+    .alerta-card.atencao::before { background:var(--ai-gold); }
+    .alerta-card.monitorar::before { background:var(--ai-blue); }
+
+    .alerta-top { display:flex; align-items:center; gap:.6rem; margin-bottom:.4rem; }
+    .alerta-badge { padding:.15rem .55rem; border-radius:3px; font-size:.65rem; font-weight:700; text-transform:uppercase; letter-spacing:.06em; }
+    .alerta-badge.critico { background:var(--ai-primary-soft); color:var(--ai-primary); }
+    .alerta-badge.atencao { background:var(--ai-gold-soft); color:var(--ai-gold); }
+    .alerta-badge.monitorar { background:var(--ai-blue-soft); color:var(--ai-blue); }
+    .alerta-categ { color:var(--ai-text3); font-size:.7rem; text-transform:uppercase; letter-spacing:.06em; }
+    .alerta-titulo { color:var(--ai-text); font-weight:600; font-size:.9rem; }
+    .alerta-desc { color:var(--ai-text2); font-size:.83rem; line-height:1.65; margin-top:.5rem; padding-top:.5rem; border-top:1px solid var(--ai-border); display:none; }
+    .alerta-card.open .alerta-desc { display:block; }
+    .alerta-acao { color:var(--ai-green); font-size:.8rem; margin-top:.5rem; display:none; }
+    .alerta-acao::before { content:'↳ '; }
+    .alerta-card.open .alerta-acao { display:block; }
+    .alerta-animais { display:flex; flex-wrap:wrap; gap:.3rem; margin-top:.6rem; display:none; }
+    .alerta-card.open .alerta-animais { display:flex; }
+    .animal-tag { background:var(--ai-surface); color:var(--ai-text2); font-size:.7rem; padding:.2rem .5rem; border-radius:3px; cursor:pointer; border:1px solid var(--ai-border); font-family:monospace; transition:all .15s; }
+    .animal-tag:hover { background:var(--ai-surface3); color:var(--ai-text); border-color:var(--ai-text3); }
+    .alerta-expand { position:absolute; right:1rem; top:1.1rem; color:var(--ai-text3); font-size:.8rem; transition:transform .2s; }
+    .alerta-card.open .alerta-expand { transform:rotate(180deg); }
+
+    .loading-overlay { display:none; flex-direction:column; align-items:center; justify-content:center; gap:1rem; padding:5rem; }
+    .loading-overlay.show { display:flex; }
+    .loading-spinner { width:40px; height:40px; border:2px solid var(--ai-border); border-top-color:var(--ai-primary); border-radius:50%; animation:spin 1s linear infinite; }
+    .loading-text { color:var(--ai-text2); font-size:.85rem; }
+
+    .empty-state { text-align:center; padding:5rem 2rem; color:var(--ai-text3); }
+    .empty-state .icon { font-size:2.5rem; margin-bottom:1rem; opacity:.5; }
+    .empty-state h3 { color:var(--ai-text); font-size:1.1rem; margin-bottom:.5rem; font-weight:600; }
+    .empty-state p { max-width:400px; margin:0 auto; line-height:1.6; font-size:.85rem; }
+
+    .print-btn { background:var(--ai-surface3); color:var(--ai-text2); border:1px solid var(--ai-border); padding:.45rem 1rem; border-radius:4px; cursor:pointer; font-size:.78rem; }
+    .print-btn:hover { color:var(--ai-text); border-color:var(--ai-text3); }
+
+    @media print {
+        .sidebar, .topbar, .alertas-config, .btn-gerar, .filtros-alertas, .print-btn { display:none !important; }
+        .main { margin:0; padding:1rem; background:#fff; color:#111; }
+        .alerta-card { break-inside:avoid; border:1px solid #ddd; background:#fff; }
+        .alerta-card::before { display:none; }
+        .alerta-desc, .alerta-acao, .alerta-animais { display:block !important; color:#333; }
+        .alerta-titulo { color:#111; }
+        .resumo-exec { background:#f5f5f5; border-color:#ccc; }
+        .resumo-exec p, .resumo-exec h3 { color:#111; }
+        .kpi-alerta { background:#f9f9f9; border-color:#ddd; }
+    }
+</style>
+
+<div class="alertas-header">
+    <div class="alertas-config">
+        <h3>Limiares de Alerta</h3>
+        <div class="config-grid">
+            <div class="config-item">
+                <label>IEP Maximo (meses)</label>
+                <input type="number" id="limIep" value="16" step="1">
+            </div>
+            <div class="config-item">
+                <label>IPP Maximo (meses)</label>
+                <input type="number" id="limIpp" value="36" step="1">
+            </div>
+            <div class="config-item">
+                <label>Consanguinidade Max (%)</label>
+                <input type="number" id="limConsang" value="3" step="0.5">
+            </div>
+            <div class="config-item">
+                <label>Concentracao Reprodutor (%)</label>
+                <input type="number" id="limConcentracao" value="15" step="1">
+            </div>
+            <div class="config-item">
+                <label>Deca Descarte (>=)</label>
+                <input type="number" id="limDeca" value="8" step="1" min="1" max="10">
+            </div>
+            <div class="config-item">
+                <label>Paternidade Desc. (%)</label>
+                <input type="number" id="limPaternidade" value="10" step="1">
+            </div>
+        </div>
+    </div>
+    <div style="display:flex; flex-direction:column; gap:.5rem; align-items:flex-end;">
+        <button class="btn-gerar" id="btnGerar" onclick="gerarAlertas()">
+            <span class="spinner"></span>
+            <span class="btn-text">Gerar Analise com IA</span>
+        </button>
+        <button class="print-btn" id="btnPrint" onclick="window.print()" style="display:none;">Imprimir Relatorio</button>
+    </div>
+</div>
+
+<div id="resultados" style="display:none;">
+    <div class="resumo-kpis" id="kpisAlertas"></div>
+    <div class="resumo-exec" id="resumoExec"></div>
+    <div class="filtros-alertas" id="filtros"></div>
+    <div class="alertas-lista" id="listaAlertas"></div>
+</div>
+
+<div class="loading-overlay" id="loading">
+    <div class="loading-spinner"></div>
+    <div class="loading-text">Analisando dados do rebanho com IA...</div>
+    <div class="loading-text" style="font-size:.72rem; color:var(--ai-text3);">Isso pode levar alguns segundos</div>
+</div>
+
+<div class="empty-state" id="emptyState">
+    <div class="icon">&#9888;</div>
+    <h3>Painel de Alertas Inteligentes</h3>
+    <p>Configure os limiares desejados e clique em <strong>"Gerar Analise com IA"</strong> para receber alertas priorizados sobre seu rebanho.</p>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let alertasData = null;
+
+async function gerarAlertas() {
+    const btn = document.getElementById('btnGerar');
+    const loading = document.getElementById('loading');
+    const resultados = document.getElementById('resultados');
+    const emptyState = document.getElementById('emptyState');
+
+    btn.disabled = true;
+    btn.classList.add('loading');
+    emptyState.style.display = 'none';
+    resultados.style.display = 'none';
+    loading.classList.add('show');
+
+    const body = {
+        iep_max: parseFloat(document.getElementById('limIep').value) || 16,
+        ipp_max: parseFloat(document.getElementById('limIpp').value) || 36,
+        consanguinidade_max: parseFloat(document.getElementById('limConsang').value) || 3,
+        concentracao_reprodutor_max: parseFloat(document.getElementById('limConcentracao').value) || 15,
+        deca_descarte: parseInt(document.getElementById('limDeca').value) || 8,
+        perc_paternidade_desconhecida: parseFloat(document.getElementById('limPaternidade').value) || 10,
+    };
+
+    try {
+        const resp = await fetch('/api/alertas/gerar', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body)
+        });
+
+        const data = await resp.json();
+        if (data.erro) {
+            alert('Erro: ' + data.erro);
+            return;
+        }
+
+        alertasData = data;
+        renderResultados(data);
+    } catch(e) {
+        alert('Erro de conexao: ' + e.message);
+    } finally {
+        btn.disabled = false;
+        btn.classList.remove('loading');
+        loading.classList.remove('show');
+    }
+}
+
+function renderResultados(data) {
+    const resultados = document.getElementById('resultados');
+    resultados.style.display = 'block';
+    document.getElementById('btnPrint').style.display = 'block';
+
+    const ind = data.indicadores_resumo || {};
+    document.getElementById('kpisAlertas').innerHTML = `
+        <div class="kpi-alerta critico">
+            <div class="numero">${ind.total_criticos || 0}</div>
+            <div class="label">Criticos</div>
+        </div>
+        <div class="kpi-alerta atencao">
+            <div class="numero">${ind.total_atencao || 0}</div>
+            <div class="label">Atencao</div>
+        </div>
+        <div class="kpi-alerta monitorar">
+            <div class="numero">${ind.total_monitorar || 0}</div>
+            <div class="label">Monitorar</div>
+        </div>
+    `;
+
+    document.getElementById('resumoExec').innerHTML = `
+        <h3>Resumo Executivo</h3>
+        <p>${data.resumo_executivo || 'Sem resumo disponivel.'}</p>
+    `;
+
+    document.getElementById('filtros').innerHTML = `
+        <button class="filtro-btn active" data-filtro="todos" onclick="filtrarAlertas('todos', this)">Todos</button>
+        <button class="filtro-btn" data-filtro="critico" onclick="filtrarAlertas('critico', this)">Criticos</button>
+        <button class="filtro-btn" data-filtro="atencao" onclick="filtrarAlertas('atencao', this)">Atencao</button>
+        <button class="filtro-btn" data-filtro="monitorar" onclick="filtrarAlertas('monitorar', this)">Monitorar</button>
+    `;
+
+    renderAlertas(data.alertas || []);
+}
+
+function renderAlertas(alertas, filtro) {
+    const lista = document.getElementById('listaAlertas');
+    const filtered = filtro && filtro !== 'todos' ? alertas.filter(a => a.nivel === filtro) : alertas;
+
+    lista.innerHTML = filtered.map(a => `
+        <div class="alerta-card ${a.nivel}" onclick="this.classList.toggle('open')">
+            <span class="alerta-expand">&#9660;</span>
+            <div class="alerta-top">
+                <span class="alerta-badge ${a.nivel}">${a.nivel}</span>
+                <span class="alerta-categ">${a.categoria || ''}</span>
+            </div>
+            <div class="alerta-titulo">${a.titulo}</div>
+            <div class="alerta-desc">${a.descricao || ''}</div>
+            <div class="alerta-acao">${a.acao_sugerida || ''}</div>
+            ${(a.animais && a.animais.length) ? `
+            <div class="alerta-animais">
+                ${a.animais.map(id => `<span class="animal-tag" onclick="event.stopPropagation(); window.open('/ficha?id='+encodeURIComponent('${id}'),'_blank')">${id}</span>`).join('')}
+            </div>` : ''}
+        </div>
+    `).join('');
+}
+
+function filtrarAlertas(filtro, el) {
+    document.querySelectorAll('.filtro-btn').forEach(b => b.classList.remove('active'));
+    el.classList.add('active');
+    if (alertasData) renderAlertas(alertasData.alertas || [], filtro);
+}
+</script>
+{% endblock %}

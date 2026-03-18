@@ -1,0 +1,219 @@
+{% extends "base.html" %}
+{% block title %}Evolucao do Rebanho – Porto do Engenho{% endblock %}
+{% block page_title %}Evolucao do Rebanho{% endblock %}
+
+{% block content %}
+<p style="font-size:13px;color:var(--gray60);margin-bottom:20px">
+    Historico de evolucao dos indicadores ao longo das rodadas. Graficos separados por matrizes e produtos (safras).
+</p>
+
+<!-- Matrizes section -->
+<h3 style="font-family:'Barlow Condensed',sans-serif;font-size:16px;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:12px;color:var(--red)">Matrizes</h3>
+<div class="grid-2">
+    <div class="panel">
+        <div class="panel-header"><h2>ICIAGen Medio — Matrizes</h2></div>
+        <div class="panel-body"><div class="chart-container"><canvas id="chartMatIcia"></canvas></div></div>
+    </div>
+    <div class="panel">
+        <div class="panel-header"><h2>IDESM Medio — Matrizes</h2></div>
+        <div class="panel-body"><div class="chart-container"><canvas id="chartMatIdesm"></canvas></div></div>
+    </div>
+    <div class="panel">
+        <div class="panel-header"><h2>RMat Medio — Matrizes</h2></div>
+        <div class="panel-body"><div class="chart-container"><canvas id="chartMatRmat"></canvas></div></div>
+    </div>
+    <div class="panel">
+        <div class="panel-header"><h2>Quantidade de Matrizes</h2></div>
+        <div class="panel-body"><div class="chart-container"><canvas id="chartMatN"></canvas></div></div>
+    </div>
+</div>
+
+<!-- Produtos section -->
+<h3 style="font-family:'Barlow Condensed',sans-serif;font-size:16px;text-transform:uppercase;letter-spacing:0.5px;margin:24px 0 12px;color:var(--black)">Produtos por Safra</h3>
+<div class="grid-2">
+    <div class="panel">
+        <div class="panel-header"><h2>ICIAGen Medio — Produtos por Safra</h2></div>
+        <div class="panel-body"><div class="chart-container"><canvas id="chartProdIcia"></canvas></div></div>
+    </div>
+    <div class="panel">
+        <div class="panel-header"><h2>IDESM Medio — Produtos por Safra</h2></div>
+        <div class="panel-body"><div class="chart-container"><canvas id="chartProdIdesm"></canvas></div></div>
+    </div>
+    <div class="panel">
+        <div class="panel-header"><h2>Quantidade de Produtos por Safra</h2></div>
+        <div class="panel-body"><div class="chart-container"><canvas id="chartProdN"></canvas></div></div>
+    </div>
+    <div class="panel">
+        <div class="panel-header"><h2>Machos vs Femeas por Safra</h2></div>
+        <div class="panel-body"><div class="chart-container"><canvas id="chartProdSexo"></canvas></div></div>
+    </div>
+</div>
+
+<!-- Detail tables -->
+<div class="grid-2" style="margin-top:24px">
+    <div class="panel">
+        <div class="panel-header"><h2>Historico Matrizes</h2></div>
+        <div class="panel-body" style="overflow-x:auto">
+            <table class="data-table">
+                <thead><tr><th>Rodada</th><th>N</th><th>ICIAGen</th><th>IDESM</th><th>RMat</th><th>IPP</th><th>CEIP</th><th>Precoces</th></tr></thead>
+                <tbody id="tblMatrizes"></tbody>
+            </table>
+        </div>
+    </div>
+    <div class="panel">
+        <div class="panel-header"><h2>Historico Produtos por Safra</h2></div>
+        <div class="panel-body" style="overflow-x:auto">
+            <table class="data-table">
+                <thead><tr><th>Rodada</th><th>Safra</th><th>N</th><th>M</th><th>F</th><th>ICIAGen</th><th>IDESM</th></tr></thead>
+                <tbody id="tblProdutos"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const COLORS = ['#D01B20', '#1A1A1A', '#1A7A3F', '#E6A817', '#5B5EA6', '#9C27B0'];
+
+function makeLineChart(canvasId, labels, datasets) {
+    new Chart(document.getElementById(canvasId), {
+        type: 'line', data: { labels, datasets },
+        options: { responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { display: datasets.length > 1, position: 'bottom' } } }
+    });
+}
+
+function makeBarChart(canvasId, labels, datasets) {
+    new Chart(document.getElementById(canvasId), {
+        type: 'bar', data: { labels, datasets },
+        options: { responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { display: datasets.length > 1, position: 'bottom' } } }
+    });
+}
+
+document.addEventListener('DOMContentLoaded', async () => {
+    const data = await API.get('/api/evolucao');
+    if (!data || !data.length) return;
+
+    const labels = data.map(d => d.rodada.nome);
+
+    // === MATRIZES ===
+    const matData = data.filter(d => d.matrizes.n > 0);
+    const matLabels = matData.map(d => d.rodada.nome);
+
+    makeLineChart('chartMatIcia', matLabels, [{
+        label: 'ICIAGen', data: matData.map(d => d.matrizes.avg_icia),
+        borderColor: '#D01B20', borderWidth: 2, tension: 0.3, pointRadius: 5, fill: false
+    }]);
+    makeLineChart('chartMatIdesm', matLabels, [{
+        label: 'IDESM', data: matData.map(d => d.matrizes.avg_idesm),
+        borderColor: '#1A1A1A', borderWidth: 2, tension: 0.3, pointRadius: 5, fill: false
+    }]);
+    makeLineChart('chartMatRmat', matLabels, [{
+        label: 'RMat', data: matData.map(d => d.matrizes.avg_rmat),
+        borderColor: '#1A7A3F', borderWidth: 2, tension: 0.3, pointRadius: 5, fill: false
+    }]);
+    makeBarChart('chartMatN', matLabels, [{
+        label: 'Matrizes', data: matData.map(d => d.matrizes.n),
+        backgroundColor: '#D01B20', borderRadius: 4
+    }]);
+
+    // Matrizes table
+    document.getElementById('tblMatrizes').innerHTML = matData.map(d => {
+        const m = d.matrizes;
+        const pctCeip = m.n ? Math.round(m.n_ceip / m.n * 100) : 0;
+        return `<tr>
+            <td><strong>${d.rodada.nome}</strong></td>
+            <td class="mono">${m.n}</td>
+            <td class="mono"><strong>${formatNum(m.avg_icia)}</strong></td>
+            <td class="mono">${formatNum(m.avg_idesm)}</td>
+            <td class="mono">${formatNum(m.avg_rmat)}</td>
+            <td class="mono">${m.avg_ipp ? m.avg_ipp + 'm' : '-'}</td>
+            <td class="mono">${m.n_ceip} (${pctCeip}%)</td>
+            <td class="mono">${m.n_precoce}</td>
+        </tr>`;
+    }).join('');
+
+    // === PRODUTOS POR SAFRA ===
+    // Collect all unique safra years across all rodadas
+    const allSafras = new Set();
+    data.forEach(d => d.produtos.safras.forEach(s => allSafras.add(s.ano)));
+    const safraYears = [...allSafras].sort();
+
+    // For each safra year, build a dataset across rodadas
+    const prodRodadas = data.filter(d => d.produtos.n > 0);
+    const prodLabels = prodRodadas.map(d => d.rodada.nome);
+
+    // ICIAGen by safra
+    const iciaDatasets = safraYears.map((ano, i) => ({
+        label: `Safra ${ano}`,
+        data: prodRodadas.map(d => {
+            const s = d.produtos.safras.find(x => x.ano === ano);
+            return s ? s.avg_icia : null;
+        }),
+        borderColor: COLORS[i % COLORS.length], borderWidth: 2, tension: 0.3,
+        pointRadius: 4, fill: false, spanGaps: true,
+    }));
+    makeLineChart('chartProdIcia', prodLabels, iciaDatasets);
+
+    // IDESM by safra
+    const idesmDatasets = safraYears.map((ano, i) => ({
+        label: `Safra ${ano}`,
+        data: prodRodadas.map(d => {
+            const s = d.produtos.safras.find(x => x.ano === ano);
+            return s ? s.avg_idesm : null;
+        }),
+        borderColor: COLORS[i % COLORS.length], borderWidth: 2, tension: 0.3,
+        pointRadius: 4, fill: false, spanGaps: true,
+    }));
+    makeLineChart('chartProdIdesm', prodLabels, idesmDatasets);
+
+    // N by safra (stacked bar)
+    const nDatasets = safraYears.map((ano, i) => ({
+        label: `Safra ${ano}`,
+        data: prodRodadas.map(d => {
+            const s = d.produtos.safras.find(x => x.ano === ano);
+            return s ? s.n : 0;
+        }),
+        backgroundColor: COLORS[i % COLORS.length], borderRadius: 4,
+    }));
+    makeBarChart('chartProdN', prodLabels, nDatasets);
+
+    // Sexo by safra (latest rodada only)
+    const lastRod = data[data.length - 1];
+    if (lastRod.produtos.safras.length) {
+        const sexLabels = lastRod.produtos.safras.map(s => `Safra ${s.ano}`);
+        new Chart(document.getElementById('chartProdSexo'), {
+            type: 'bar',
+            data: {
+                labels: sexLabels,
+                datasets: [
+                    { label: 'Machos', data: lastRod.produtos.safras.map(s => s.machos), backgroundColor: '#1A1A1A', borderRadius: 4 },
+                    { label: 'Femeas', data: lastRod.produtos.safras.map(s => s.femeas), backgroundColor: '#D01B20', borderRadius: 4 },
+                ]
+            },
+            options: { responsive: true, maintainAspectRatio: false,
+                plugins: { legend: { display: true, position: 'bottom' } } }
+        });
+    }
+
+    // Produtos table
+    let prodHtml = '';
+    prodRodadas.forEach(d => {
+        d.produtos.safras.forEach((s, i) => {
+            prodHtml += `<tr>
+                <td>${i === 0 ? '<strong>' + d.rodada.nome + '</strong>' : ''}</td>
+                <td><span class="badge badge-outline">${s.ano}</span></td>
+                <td class="mono">${s.n}</td>
+                <td class="mono">${s.machos}</td>
+                <td class="mono">${s.femeas}</td>
+                <td class="mono"><strong>${formatNum(s.avg_icia)}</strong></td>
+                <td class="mono">${formatNum(s.avg_idesm)}</td>
+            </tr>`;
+        });
+    });
+    document.getElementById('tblProdutos').innerHTML = prodHtml;
+});
+</script>
+{% endblock %}

@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Estoque de Touros – Porto do Engenho{% endblock %}
+{% block page_title %}Estoque de Touros{% endblock %}
+
+{% block content %}
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:24px">
+    <h2 style="font-family:'Barlow Condensed',sans-serif;font-size:20px;text-transform:uppercase;letter-spacing:0.5px">Safras de Venda</h2>
+    <button class="btn btn-red" onclick="novaSafra()">+ Nova Safra</button>
+</div>
+
+<div id="gruposGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px">
+    <p style="color:var(--gray40);grid-column:1/-1;text-align:center;padding:40px">Carregando...</p>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function loadGrupos() {
+    const data = await API.get('/api/estoque/grupos');
+    if (!data) return;
+    const grid = document.getElementById('gruposGrid');
+
+    if (!data.length) {
+        grid.innerHTML = '<p style="color:var(--gray40);grid-column:1/-1;text-align:center;padding:60px">Nenhuma safra criada. Clique em "+ Nova Safra" para começar.</p>';
+        return;
+    }
+
+    grid.innerHTML = data.map(g => `
+        <div class="panel" style="cursor:pointer;transition:transform 0.1s" onclick="window.location='/estoque/${g.id}'"
+             onmouseenter="this.style.transform='translateY(-2px)'" onmouseleave="this.style.transform=''">
+            <div class="panel-header" style="border-bottom:3px solid var(--red)">
+                <h2 style="font-size:15px">${g.nome}</h2>
+                <button class="btn btn-outline btn-sm" onclick="event.stopPropagation();delGrupo(${g.id},'${g.nome}')">Excluir</button>
+            </div>
+            <div class="panel-body" style="padding:16px">
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
+                    <div style="text-align:center;padding:8px;background:var(--gray5);border-radius:6px">
+                        <div style="font-family:'DM Mono',monospace;font-size:22px;color:var(--ok)">${g.disp}</div>
+                        <div style="font-size:10px;color:var(--gray40);text-transform:uppercase">Disponíveis</div>
+                    </div>
+                    <div style="text-align:center;padding:8px;background:var(--gray5);border-radius:6px">
+                        <div style="font-family:'DM Mono',monospace;font-size:22px;color:var(--gray40)">${g.vend}</div>
+                        <div style="font-size:10px;color:var(--gray40);text-transform:uppercase">Vendidos</div>
+                    </div>
+                </div>
+                <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--gray60)">
+                    <span>ICIAGen: <strong style="color:var(--black)">${g.avg_icia}</strong></span>
+                    <span>Média venda: <strong style="color:var(--ok)">${g.avg_venda ? 'R$ ' + g.avg_venda.toLocaleString('pt-BR') : '—'}</strong></span>
+                </div>
+            </div>
+        </div>
+    `).join('');
+}
+
+async function novaSafra() {
+    const nome = prompt('Nome da safra (ex: Safra J K, Safra G H):');
+    if (!nome || !nome.trim()) return;
+    const res = await fetch('/api/estoque/grupos', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({nome: nome.trim()})
+    });
+    const data = await res.json();
+    if (data.ok) {
+        window.location = `/estoque/${data.id}`;
+    } else {
+        alert(data.erro || 'Erro ao criar safra');
+    }
+}
+
+async function delGrupo(id, nome) {
+    if (!confirm(`Excluir "${nome}" e todos os touros desta safra?`)) return;
+    await API.del(`/api/estoque/grupos/${id}`);
+    loadGrupos();
+}
+
+loadGrupos();
+</script>
+{% endblock %}

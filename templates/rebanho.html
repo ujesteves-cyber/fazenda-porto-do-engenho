@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+{% block title %}Rebanho – Porto do Engenho{% endblock %}
+{% block page_title %}Rebanho{% endblock %}
+
+{% block content %}
+<!-- KPIs -->
+<div class="kpi-grid">
+    <div class="kpi-card"><div class="kpi-label">Total Animais</div><div class="kpi-value" id="rkTotal">-</div></div>
+    <div class="kpi-card green"><div class="kpi-label">Ativos</div><div class="kpi-value" id="rkAtivos">-</div></div>
+    <div class="kpi-card" style="border-left-color:var(--gray40)"><div class="kpi-label">Inativos</div><div class="kpi-value" id="rkInativos">-</div></div>
+    <div class="kpi-card"><div class="kpi-label">Matrizes</div><div class="kpi-value" id="rkMat">-</div></div>
+    <div class="kpi-card"><div class="kpi-label">Produtos</div><div class="kpi-value" id="rkProd">-</div></div>
+</div>
+
+<!-- Filters -->
+<div class="filters" style="flex-wrap:wrap">
+    <input type="text" id="fSearch" placeholder="Buscar animal, touro pai..." style="width:220px">
+    <select id="fAtivo"><option value="">Status</option><option value="1">Ativos</option><option value="0">Inativos</option></select>
+    <select id="fTipo"><option value="">Tipo</option><option value="matriz">Matrizes</option><option value="produto">Produtos</option></select>
+    <select id="fCateg"><option value="">Categoria</option><option value="M">M</option><option value="N">N</option><option value="P">P</option><option value="S">S</option></select>
+    <select id="fSexo"><option value="">Sexo</option><option value="M">Machos</option><option value="F">Femeas</option></select>
+    <button class="btn btn-red btn-sm" onclick="loadRebanho(0)">Filtrar</button>
+    <button class="btn btn-outline btn-sm" onclick="limpar()">Limpar</button>
+</div>
+
+<!-- Table -->
+<div class="panel">
+    <div class="panel-body" style="overflow-x:auto">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th class="sortable" onclick="setOrder('animal_id')">Animal ID <span class="sort-icon" data-col="animal_id"></span></th>
+                    <th class="sortable" onclick="setOrder('tipo')">Tipo <span class="sort-icon" data-col="tipo"></span></th>
+                    <th>Status</th>
+                    <th class="sortable" onclick="setOrder('rodada')">Rodada <span class="sort-icon" data-col="rodada"></span></th>
+                    <th class="sortable" onclick="setOrder('categoria')">Cat. <span class="sort-icon" data-col="categoria"></span></th>
+                    <th>Sexo</th>
+                    <th>Pai</th>
+                    <th>Nasc.</th>
+                    <th class="sortable" onclick="setOrder('iciagen')">ICIAGen <span class="sort-icon" data-col="iciagen"></span></th>
+                    <th>Deca</th>
+                    <th class="sortable" onclick="setOrder('idesm')">IDESM <span class="sort-icon" data-col="idesm"></span></th>
+                    <th class="sortable" onclick="setOrder('rmat')">RMat <span class="sort-icon" data-col="rmat"></span></th>
+                </tr>
+            </thead>
+            <tbody id="rebBody"></tbody>
+        </table>
+        <div class="pagination" id="rebPag"></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let currentOrder = 'iciagen';
+const LIMIT = 20;
+
+function setOrder(o) {
+    currentOrder = o;
+    document.querySelectorAll('.sort-icon').forEach(el => {
+        el.textContent = el.dataset.col === o ? '▼' : '';
+    });
+    loadRebanho(0);
+}
+
+function limpar() {
+    document.querySelectorAll('.filters select').forEach(s => s.value = '');
+    document.querySelectorAll('.filters input').forEach(i => i.value = '');
+    loadRebanho(0);
+}
+
+async function loadRebanho(offset) {
+    const params = new URLSearchParams();
+    params.set('limit', LIMIT);
+    params.set('offset', offset);
+    params.set('order', currentOrder);
+
+    const fields = { 'ativo': 'fAtivo', 'tipo': 'fTipo', 'categ': 'fCateg', 'sexo': 'fSexo' };
+    for (const [param, id] of Object.entries(fields)) {
+        const v = document.getElementById(id).value;
+        if (v) params.set(param, v);
+    }
+    const q = document.getElementById('fSearch').value.trim();
+    if (q) params.set('q', q);
+
+    const data = await API.get(`/api/rebanho?${params}`);
+    if (!data) return;
+
+    // KPIs
+    document.getElementById('rkTotal').textContent = data.kpis.total;
+    document.getElementById('rkAtivos').textContent = data.kpis.ativos;
+    document.getElementById('rkInativos').textContent = data.kpis.inativos;
+    document.getElementById('rkMat').textContent = data.kpis.n_matrizes;
+    document.getElementById('rkProd').textContent = data.kpis.n_produtos;
+
+    // Table
+    const tbody = document.getElementById('rebBody');
+    tbody.innerHTML = data.data.map((r, i) => {
+        const ativo = r.ativo;
+        const statusBadge = ativo
+            ? '<span class="badge badge-green">Ativa</span>'
+            : '<span class="badge" style="background:#FDE8E8;color:var(--red)">Inativa</span>';
+        const tipoBadge = r.tipo === 'Matriz'
+            ? '<span class="badge badge-red" style="font-size:9px">Matriz</span>'
+            : '<span class="badge badge-black" style="font-size:9px">Produto</span>';
+        const sexoIcon = r.sexo === 'M' ? '<span style="color:var(--black)">&#9794;</span>'
+            : r.sexo === 'F' ? '<span style="color:var(--red)">&#9792;</span>' : '-';
+
+        return `<tr style="${!ativo ? 'opacity:0.55' : ''}">
+            <td>${offset + i + 1}</td>
+            <td class="mono"><a href="/ficha?id=${r.animal_id_enc}"><strong>${r.animal_id}</strong></a></td>
+            <td>${tipoBadge}</td>
+            <td>${statusBadge}</td>
+            <td style="font-size:12px">${r.rodada_nome || '-'}</td>
+            <td><span class="badge badge-gray">${r.categoria || '-'}</span></td>
+            <td>${sexoIcon}</td>
+            <td style="font-size:12px">${r.pai || '-'}</td>
+            <td class="mono" style="font-size:12px">${r.data_nasc || '-'}</td>
+            <td class="mono"><strong>${formatNum(r.iciagen)}</strong></td>
+            <td>${decaBadge(r.deca_icia)}</td>
+            <td class="mono">${formatNum(r.idesm)}</td>
+            <td class="mono">${formatNum(r.rmat)}</td>
+        </tr>`;
+    }).join('');
+
+    // Pagination
+    const totalPages = Math.ceil(data.total / LIMIT);
+    const currentPage = Math.floor(offset / LIMIT) + 1;
+    document.getElementById('rebPag').innerHTML = `
+        <button ${offset === 0 ? 'disabled' : ''} onclick="loadRebanho(${offset - LIMIT})">Anterior</button>
+        <span class="current">Pg ${currentPage} de ${totalPages} (${data.total} animais)</span>
+        <button ${offset + LIMIT >= data.total ? 'disabled' : ''} onclick="loadRebanho(${offset + LIMIT})">Proxima</button>
+    `;
+}
+
+loadRebanho(0);
+</script>
+{% endblock %}

@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}Reprodutores – Porto do Engenho{% endblock %}
+{% block page_title %}Reprodutores{% endblock %}
+
+{% block content %}
+<div class="grid-2">
+    <!-- Contribuição genética -->
+    <div class="panel">
+        <div class="panel-header"><h2>Top Touros por Contribuição Genética</h2></div>
+        <div class="panel-body"><div class="chart-container" style="height:400px"><canvas id="chartContrib"></canvas></div></div>
+    </div>
+
+    <!-- Tabela -->
+    <div class="panel">
+        <div class="panel-header"><h2>Detalhamento</h2></div>
+        <div class="panel-body">
+            <table class="data-table">
+                <thead><tr><th>#</th><th>Touro</th><th>Filhas</th><th>%</th><th>Acumulado</th></tr></thead>
+                <tbody id="tourosBody"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Acumulado -->
+<div class="panel">
+    <div class="panel-header"><h2>Contribuição Individual vs Acumulada</h2></div>
+    <div class="panel-body"><div class="chart-container"><canvas id="chartAcum"></canvas></div></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', async () => {
+    const data = await API.get('/api/touros/contribuicao');
+    if (!data || !data.length) return;
+
+    // Table
+    const tbody = document.getElementById('tourosBody');
+    tbody.innerHTML = data.map((r, i) => `
+        <tr>
+            <td>${i + 1}</td>
+            <td><strong>${r.touro}</strong></td>
+            <td class="mono">${r.n}</td>
+            <td class="mono">${formatNum(r.pct)}%</td>
+            <td class="mono" style="color:var(--red)">${formatNum(r.acum)}%</td>
+        </tr>
+    `).join('');
+
+    // Horizontal bar chart
+    new Chart(document.getElementById('chartContrib'), {
+        type: 'bar',
+        data: {
+            labels: data.map(d => d.touro),
+            datasets: [{
+                data: data.map(d => d.pct),
+                backgroundColor: data.map((_, i) => i < 3 ? '#D01B20' : '#1A1A1A'),
+                borderRadius: 4,
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            indexAxis: 'y',
+            scales: { x: { title: { display: true, text: '% do rebanho' } } }
+        }
+    });
+
+    // Line + Bar chart (acumulado)
+    new Chart(document.getElementById('chartAcum'), {
+        type: 'bar',
+        data: {
+            labels: data.map(d => d.touro),
+            datasets: [
+                { type: 'bar', label: 'Individual %', data: data.map(d => d.pct), backgroundColor: '#D01B20', borderRadius: 4, order: 2 },
+                { type: 'line', label: 'Acumulado %', data: data.map(d => d.acum), borderColor: '#1A1A1A', borderWidth: 2, tension: 0.3, pointRadius: 4, order: 1, yAxisID: 'y1' },
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: true, position: 'bottom' } },
+            scales: {
+                y: { title: { display: true, text: 'Individual %' }, beginAtZero: true },
+                y1: { position: 'right', title: { display: true, text: 'Acumulado %' }, beginAtZero: true, grid: { drawOnChartArea: false } },
+            }
+        }
+    });
+});
+</script>
+{% endblock %}

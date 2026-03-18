@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block title %}Indices Principais – Porto do Engenho{% endblock %}
+{% block page_title %}Indices Principais{% endblock %}
+
+{% block content %}
+<div id="indicesRodada" style="margin-bottom:16px;font-size:13px;color:var(--gray60)"></div>
+
+<div class="grid-2">
+    <!-- ICIAGen -->
+    <div class="index-card">
+        <h3><span class="sigla">ICIAGen</span> — Indice de Melhoramento Genomico</h3>
+        <p class="desc">Indice harmonico de selecao que penaliza animais com DEPs genomicas desequilibradas e bonifica aqueles com superioridade harmonica entre as caracteristicas. Maior enfase em precocidade sexual. Pondera crescimento, carcaca, reproducao e temperamento.</p>
+        <div class="stats">
+            <div class="stat-box"><div class="val" id="iciaFaz">-</div><div class="lbl">Media Fazenda</div></div>
+            <div class="stat-box"><div class="val" id="iciaMax">-</div><div class="lbl">Maximo</div></div>
+            <div class="stat-box"><div class="val" id="iciaPerc">-</div><div class="lbl">Percentil Medio</div></div>
+        </div>
+        <div class="chart-container" style="height:200px"><canvas id="chartIcia"></canvas></div>
+    </div>
+
+    <!-- IDESM -->
+    <div class="index-card">
+        <h3><span class="sigla">IDESM</span> — Indice Desmama</h3>
+        <p class="desc">Indice maternal que pondera o efeito direto do crescimento e qualidade de carcaca ate a desmama. Indicador chave para eficiencia da vaca como mae.</p>
+        <div class="stats">
+            <div class="stat-box"><div class="val" id="idesmFaz">-</div><div class="lbl">Media Fazenda</div></div>
+            <div class="stat-box"><div class="val" id="idesmMax">-</div><div class="lbl">Maximo</div></div>
+            <div class="stat-box"><div class="val" id="idesmPerc">-</div><div class="lbl">Percentil Medio</div></div>
+        </div>
+    </div>
+
+    <!-- IPP -->
+    <div class="index-card">
+        <h3><span class="sigla">IPP</span> — Idade ao Primeiro Parto</h3>
+        <p class="desc">Precocidade sexual da femea medida em meses. Femeas com IPP &lt; 30m = precoces; IPP &lt; 24m = super-precoces.</p>
+        <div class="stats">
+            <div class="stat-box"><div class="val" id="ippFaz">-</div><div class="lbl">Media Fazenda</div></div>
+            <div class="stat-box"><div class="val" id="ippMin">-</div><div class="lbl">Minimo</div></div>
+            <div class="stat-box"><div class="val" id="ippPrecoces">-</div><div class="lbl">% Precoces</div></div>
+        </div>
+    </div>
+
+    <!-- RMat -->
+    <div class="index-card">
+        <h3><span class="sigla">RMat</span> — Retorno Maternal</h3>
+        <p class="desc">Indice bioeconomico: estima o retorno por vaca (kg de peso vivo produzido/ano), descontado o custo de mantenca. Componentes: precocidade (IPP), permanencia reprodutiva, custo de mantenca e desempenho dos bezerros.</p>
+        <div class="stats">
+            <div class="stat-box"><div class="val" id="rmatFaz">-</div><div class="lbl">Media Fazenda</div></div>
+            <div class="stat-box"><div class="val" id="rmatMax">-</div><div class="lbl">Maximo</div></div>
+            <div class="stat-box"><div class="val" id="rmatPerc">-</div><div class="lbl">Percentil Medio</div></div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', async () => {
+    const kpis = await API.get('/api/dashboard/kpis');
+    if (kpis && !kpis.erro) {
+        document.getElementById('indicesRodada').innerHTML = `Rodada: <strong>${kpis.rodada}</strong>`;
+        document.getElementById('iciaFaz').textContent = formatNum(kpis.iciagen_avg);
+        document.getElementById('idesmFaz').textContent = formatNum(kpis.idesm_avg);
+        document.getElementById('ippFaz').textContent = formatNum(kpis.ipp_avg, 1) + 'm';
+        document.getElementById('rmatFaz').textContent = formatNum(kpis.rmat_avg);
+    }
+
+    const pos = await API.get('/api/posicao');
+    if (pos) {
+        document.getElementById('iciaPerc').textContent = pos.perc_icia + '%';
+        document.getElementById('idesmPerc').textContent = pos.perc_idesm + '%';
+        document.getElementById('rmatPerc').textContent = pos.perc_rmat + '%';
+        document.getElementById('ippPrecoces').textContent = pos.precoce_pct + '%';
+    }
+
+    // Get max values
+    const top = await API.get('/api/dashboard/top10');
+    if (top && top.length) {
+        document.getElementById('iciaMax').textContent = formatNum(top[0].iciagen);
+        document.getElementById('idesmMax').textContent = formatNum(top[0].idesm);
+        document.getElementById('rmatMax').textContent = formatNum(top[0].rmat);
+    }
+
+    // IPP min
+    const matData = await API.get('/api/matrizes?order=ipp&limit=1');
+    if (matData && matData.data.length) {
+        document.getElementById('ippMin').textContent = matData.data[0].ipp ? formatNum(matData.data[0].ipp, 1) + 'm' : '-';
+    }
+
+    // Evolution chart
+    const safras = await API.get('/api/dashboard/safras');
+    if (safras && safras.length) {
+        new Chart(document.getElementById('chartIcia'), {
+            type: 'line',
+            data: {
+                labels: safras.map(s => s.safra),
+                datasets: [{
+                    data: safras.map(s => s.avg_icia),
+                    borderColor: '#D01B20', borderWidth: 2, tension: 0.3, pointRadius: 3, fill: false
+                }]
+            },
+            options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: false } } }
+        });
+    }
+});
+</script>
+{% endblock %}

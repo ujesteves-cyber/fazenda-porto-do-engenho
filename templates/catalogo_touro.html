@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Catálogo – Porto do Engenho</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@500;600;700&family=DM+Mono:wght@400;500&display=swap');
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Barlow', sans-serif; background: white; color: #1A1A1A; font-size: 13px; }
+
+        .catalogo { max-width: 1000px; margin: 0 auto; padding: 32px 40px; }
+
+        .cat-header {
+            display: flex; align-items: center; justify-content: space-between;
+            border-bottom: 3px solid #D01B20; padding-bottom: 16px; margin-bottom: 24px;
+        }
+        .cat-header img { height: 70px; background: white; padding: 3px; border-radius: 4px; }
+        .cat-header .title { text-align: right; }
+        .cat-header .title h1 {
+            font-family: 'Barlow Condensed', sans-serif; font-size: 24px; color: #D01B20;
+            text-transform: uppercase; letter-spacing: 1px;
+        }
+        .cat-header .title h2 {
+            font-family: 'Barlow Condensed', sans-serif; font-size: 16px; color: #666;
+            font-weight: 500; margin-top: 2px;
+        }
+        .cat-header .title p { font-size: 11px; color: #999; }
+
+        table { width: 100%; border-collapse: collapse; font-size: 12px; }
+        thead { background: #1A1A1A; color: white; }
+        th {
+            padding: 8px 10px; text-align: left; font-size: 10px; text-transform: uppercase;
+            letter-spacing: 0.3px; font-weight: 600;
+        }
+        td { padding: 7px 10px; border-bottom: 1px solid #E8E8E8; }
+        tbody tr:nth-child(even) { background: #FAFAFA; }
+        .mono { font-family: 'DM Mono', monospace; font-size: 11px; }
+        .bold { font-weight: 600; }
+        .red { color: #D01B20; }
+
+        .cat-footer {
+            margin-top: 24px; padding-top: 16px; border-top: 2px solid #1A1A1A;
+            display: flex; justify-content: space-between; font-size: 10px; color: #999;
+        }
+
+        .no-print {
+            position: fixed; top: 16px; right: 16px; z-index: 100;
+            display: flex; gap: 8px;
+        }
+        .no-print a, .no-print button {
+            padding: 10px 20px; border: none; border-radius: 6px;
+            font-family: 'Barlow Condensed', sans-serif; font-size: 14px; font-weight: 700;
+            cursor: pointer; text-transform: uppercase; letter-spacing: 1px; text-decoration: none;
+        }
+        .no-print .btn-back { background: #1A1A1A; color: white; }
+        .no-print .btn-print { background: #D01B20; color: white; }
+
+        @media print {
+            .no-print { display: none !important; }
+            .catalogo { padding: 10px; }
+            body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+            @page { size: A4 landscape; margin: 12mm; }
+        }
+    </style>
+</head>
+<body>
+    <div class="no-print">
+        <a href="/estoque/{{ grupo_id }}" class="btn-back">Voltar</a>
+        <button class="btn-print" onclick="window.print()">Imprimir</button>
+    </div>
+
+    <div class="catalogo" id="catalogoContent">
+        <p style="text-align:center;color:#999;padding:60px">Carregando...</p>
+    </div>
+
+    <script>
+    const GRUPO_ID = {{ grupo_id }};
+
+    function fmt(v, d) { return v !== null && v !== undefined ? Number(v).toFixed(d || 2) : '-'; }
+
+    document.addEventListener('DOMContentLoaded', async () => {
+        const res = await fetch(`/api/estoque/grupos/${GRUPO_ID}`);
+        const data = await res.json();
+        if (data.erro) {
+            document.getElementById('catalogoContent').innerHTML = '<p style="color:#D01B20;text-align:center">Grupo não encontrado.</p>';
+            return;
+        }
+
+        const g = data.grupo;
+        const k = data.kpis;
+        // Only show available bulls in catalog
+        const touros = data.data.filter(t => !t.vendido);
+
+        document.title = `Catálogo ${g.nome} – Porto do Engenho`;
+
+        let html = `
+            <div class="cat-header">
+                <img src="/static/logo.jpg" alt="Porto do Engenho">
+                <div class="title">
+                    <h1>Catálogo de Touros</h1>
+                    <h2>${g.nome}</h2>
+                    <p>Fazenda Porto do Engenho · Nelore · Cariacica-ES</p>
+                </div>
+            </div>
+
+            <table>
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Brinco</th>
+                        <th>Nascimento</th>
+                        <th>Pai</th>
+                        <th>Avô Paterno</th>
+                        <th>Avô Materno</th>
+                        <th>Peso</th>
+                        <th>ICIAGen</th>
+                        <th>IDESM</th>
+                        <th>RMat</th>
+                        <th>IFRIG</th>
+                    </tr>
+                </thead>
+                <tbody>`;
+
+        touros.forEach((t, i) => {
+            const pesoStr = t.peso ? fmt(t.peso, 0) + 'kg' : '-';
+            html += `<tr>
+                <td>${i + 1}</td>
+                <td class="mono bold">${t.brinco}</td>
+                <td class="mono">${t.data_nasc || '-'}</td>
+                <td>${t.pai || '-'}</td>
+                <td>${t.avo_paterno || '-'}</td>
+                <td>${t.avo_materno || '-'}</td>
+                <td class="mono">${pesoStr}</td>
+                <td class="mono bold red">${fmt(t.iciagen)}</td>
+                <td class="mono">${fmt(t.idesm)}</td>
+                <td class="mono">${fmt(t.rmat)}</td>
+                <td class="mono">${fmt(t.ifrig)}</td>
+            </tr>`;
+        });
+
+        html += `</tbody></table>
+
+            <div class="cat-footer">
+                <span>Fazenda Porto do Engenho · CIA de Melhoramento · Fazenda 167</span>
+                <span>${g.nome} · ${touros.length} animais · Gerado em ${new Date().toLocaleDateString('pt-BR')}</span>
+            </div>`;
+
+        document.getElementById('catalogoContent').innerHTML = html;
+    });
+    </script>
+</body>
+</html>

@@ -1,0 +1,329 @@
+{% extends "base.html" %}
+{% block title %}Estoque – Porto do Engenho{% endblock %}
+{% block page_title %}Estoque de Touros{% endblock %}
+
+{% block content %}
+<div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">
+    <a href="/estoque" style="color:var(--gray40);text-decoration:none;font-size:13px">Safras</a>
+    <span style="color:var(--gray20)">/</span>
+    <h2 id="grupoNome" style="font-family:'Barlow Condensed',sans-serif;font-size:20px;text-transform:uppercase">Carregando...</h2>
+    <button class="btn btn-outline btn-sm" onclick="renomearGrupo()" title="Renomear">Renomear</button>
+</div>
+
+<!-- KPIs -->
+<div class="kpi-grid">
+    <div class="kpi-card"><div class="kpi-label">Disponíveis</div><div class="kpi-value" id="gkDisp">-</div></div>
+    <div class="kpi-card" style="border-left-color:var(--gray40)"><div class="kpi-label">Vendidos</div><div class="kpi-value" id="gkVend">-</div></div>
+    <div class="kpi-card"><div class="kpi-label">ICIAGen Médio</div><div class="kpi-value" id="gkIcia">-</div></div>
+    <div class="kpi-card"><div class="kpi-label">IDESM Médio</div><div class="kpi-value" id="gkIdesm">-</div></div>
+    <div class="kpi-card"><div class="kpi-label">RMat Médio</div><div class="kpi-value" id="gkRmat">-</div></div>
+    <div class="kpi-card green"><div class="kpi-label">Média de Venda</div><div class="kpi-value" id="gkVenda">-</div><div class="kpi-sub" id="gkVendaTotal">-</div></div>
+</div>
+
+<!-- Actions bar -->
+<div class="filters">
+    <input type="text" id="fBusca" placeholder="Buscar brinco, pai..." style="width:220px">
+    <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
+        <input type="checkbox" id="fTodos"> Mostrar vendidos
+    </label>
+    <button class="btn btn-outline btn-sm" onclick="loadGrupo()">Filtrar</button>
+    <div style="flex:1"></div>
+    <button class="btn btn-black btn-sm" onclick="document.getElementById('importModal').style.display='flex'">Importar Planilha</button>
+    <a id="btnCatalogo" href="#" target="_blank" class="btn btn-red btn-sm">Gerar Catálogo</a>
+</div>
+
+<!-- Table -->
+<div class="panel">
+    <div class="panel-body" style="overflow-x:auto">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th class="sortable" onclick="setSort('brinco')">Brinco <span class="sort-icon" data-col="brinco"></span></th>
+                    <th>Nasc.</th><th>Pai</th><th>Avo Pat.</th><th>Avo Mat.</th>
+                    <th class="sortable" onclick="setSort('peso')">Peso <span class="sort-icon" data-col="peso"></span></th>
+                    <th class="sortable" onclick="setSort('iciagen')">ICIAGen <span class="sort-icon" data-col="iciagen"></span></th>
+                    <th class="sortable" onclick="setSort('idesm')">IDESM <span class="sort-icon" data-col="idesm"></span></th>
+                    <th class="sortable" onclick="setSort('rmat')">RMat <span class="sort-icon" data-col="rmat"></span></th>
+                    <th>IFRIG</th><th>Status</th><th>Valor</th><th>Acoes</th>
+                </tr>
+            </thead>
+            <tbody id="tourosBody"></tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Modal importação -->
+<div id="importModal" class="modal-overlay">
+    <div class="modal-box" style="width:420px">
+        <h3 style="font-family:'Barlow Condensed',sans-serif;font-size:18px;margin-bottom:16px">Importar Planilha de Touros</h3>
+        <p style="font-size:12px;color:var(--gray60);margin-bottom:16px">
+            Colunas aceitas: BRINCO/produto, dataN, Pai/touro, Avô Paterno, Avô Materno, IDESM, ICiaGen, RMat, IFRIG, Peso
+        </p>
+        <form id="importForm" enctype="multipart/form-data">
+            <input type="file" name="arquivo" accept=".xls,.xlsx" required style="font-size:13px;margin-bottom:16px">
+            <div style="display:flex;gap:8px;justify-content:flex-end">
+                <button type="button" class="btn btn-outline btn-sm" onclick="fecharModal('importModal')">Cancelar</button>
+                <button type="submit" class="btn btn-red btn-sm">Importar</button>
+            </div>
+        </form>
+        <div id="importResult" style="display:none;margin-top:12px" class="flash success"></div>
+    </div>
+</div>
+
+<!-- Modal venda -->
+<div id="vendaModal" class="modal-overlay">
+    <div class="modal-box" style="width:360px">
+        <h3 style="font-family:'Barlow Condensed',sans-serif;font-size:18px;margin-bottom:16px">Registrar Venda</h3>
+        <p id="vendaBrinco" style="font-family:'DM Mono',monospace;font-size:16px;margin-bottom:16px"></p>
+        <div class="form-field">
+            <label>Valor da Venda (R$)</label>
+            <input type="number" id="vendaValor" step="0.01" min="0" placeholder="Ex: 8500.00">
+        </div>
+        <div style="display:flex;gap:8px;justify-content:flex-end">
+            <button class="btn btn-outline btn-sm" onclick="fecharModal('vendaModal')">Cancelar</button>
+            <button class="btn btn-red btn-sm" onclick="confirmarVenda()">Confirmar Venda</button>
+        </div>
+    </div>
+</div>
+
+<!-- Modal edição -->
+<div id="editModal" class="modal-overlay">
+    <div class="modal-box" style="width:520px">
+        <h3 style="font-family:'Barlow Condensed',sans-serif;font-size:18px;margin-bottom:16px">Editar Touro</h3>
+        <input type="hidden" id="editId">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <div class="form-field"><label>Brinco</label><input type="text" id="edBrinco"></div>
+            <div class="form-field"><label>Nascimento</label><input type="text" id="edNasc" placeholder="dd/mm/aaaa"></div>
+            <div class="form-field"><label>Pai</label><input type="text" id="edPai"></div>
+            <div class="form-field"><label>Avô Paterno</label><input type="text" id="edAvoPat"></div>
+            <div class="form-field"><label>Avô Materno</label><input type="text" id="edAvoMat"></div>
+            <div class="form-field"><label>Peso (kg)</label><input type="number" id="edPeso" step="0.1"></div>
+            <div class="form-field"><label>Data Pesagem</label><input type="text" id="edDataPes" placeholder="dd/mm/aaaa"></div>
+            <div class="form-field"><label>ICIAGen</label><input type="number" id="edIcia" step="0.01"></div>
+            <div class="form-field"><label>IDESM</label><input type="number" id="edIdesm" step="0.01"></div>
+            <div class="form-field"><label>RMat</label><input type="number" id="edRmat" step="0.01"></div>
+            <div class="form-field"><label>IFRIG</label><input type="number" id="edIfrig" step="0.01"></div>
+            <div class="form-field"><label>Obs</label><input type="text" id="edObs"></div>
+        </div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+            <button class="btn btn-outline btn-sm" onclick="fecharModal('editModal')">Cancelar</button>
+            <button class="btn btn-red btn-sm" onclick="salvarEdicao()">Salvar</button>
+        </div>
+    </div>
+</div>
+
+<style>
+.modal-overlay { display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);z-index:200;align-items:center;justify-content:center; }
+.modal-box { background:var(--white);border-radius:8px;padding:32px;box-shadow:0 8px 32px rgba(0,0,0,0.3); }
+.form-field { margin-bottom:12px; }
+.form-field label { display:block;font-size:11px;color:var(--gray60);margin-bottom:4px;font-weight:600;text-transform:uppercase;letter-spacing:0.3px; }
+.form-field input { width:100%;padding:8px 12px;border:1px solid var(--gray20);border-radius:6px;font-family:'Barlow',sans-serif;font-size:13px; }
+.form-field input:focus { outline:none;border-color:var(--red); }
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const GRUPO_ID = {{ grupo_id }};
+let vendaTouroId = null;
+let currentSort = 'iciagen';
+let allTouros = [];
+
+function setSort(col) {
+    currentSort = col;
+    document.querySelectorAll('.sort-icon').forEach(el => {
+        el.textContent = el.dataset.col === col ? '▼' : '';
+    });
+    renderTouros();
+}
+
+function renderTouros() {
+    const sorted = [...allTouros].sort((a, b) => {
+        if (currentSort === 'brinco') return (a.brinco || '').localeCompare(b.brinco || '');
+        const va = a[currentSort] ?? -Infinity;
+        const vb = b[currentSort] ?? -Infinity;
+        return vb - va; // descending for numbers
+    });
+
+    const tbody = document.getElementById('tourosBody');
+    if (!sorted.length) {
+        tbody.innerHTML = '<tr><td colspan="13" style="text-align:center;color:var(--gray40);padding:40px">Nenhum touro nesta safra. Importe uma planilha.</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = sorted.map(t => {
+        const v = t.vendido;
+        const status = v ? '<span class="badge badge-gray">Vendido</span>' : '<span class="badge badge-green">Disponivel</span>';
+        const valor = v && t.valor_venda
+            ? `<span class="mono" style="font-size:12px;color:var(--ok)">R$ ${Number(t.valor_venda).toLocaleString('pt-BR')}</span>`
+            : (v ? '<span style="color:var(--gray40);font-size:11px">Sem valor</span>' : '');
+        const pesoStr = t.peso ? `${formatNum(t.peso,0)}kg` : '-';
+        const pesoData = t.data_pesagem ? `<br><span style="font-size:10px;color:var(--gray40)">${t.data_pesagem}</span>` : '';
+
+        let acoes = `<button class="btn btn-outline btn-sm" onclick='abrirEdicao(${JSON.stringify(t)})'>Editar</button> `;
+        if (v) {
+            acoes += `<button class="btn btn-outline btn-sm" onclick="devolver(${t.id})">Devolver</button>`;
+        } else {
+            acoes += `<button class="btn btn-red btn-sm" onclick="abrirVenda(${t.id},\`${t.brinco}\`)">Vender</button>
+                      <button class="btn btn-outline btn-sm" onclick="remover(${t.id})" title="Remover">X</button>`;
+        }
+
+        return `<tr style="${v ? 'opacity:0.5' : ''}">
+            <td class="mono"><strong>${t.brinco}</strong></td>
+            <td class="mono" style="font-size:12px">${t.data_nasc || '-'}</td>
+            <td style="font-size:12px">${t.pai || '-'}</td>
+            <td style="font-size:12px">${t.avo_paterno || '-'}</td>
+            <td style="font-size:12px">${t.avo_materno || '-'}</td>
+            <td class="mono">${pesoStr}${pesoData}</td>
+            <td class="mono"><strong>${formatNum(t.iciagen)}</strong></td>
+            <td class="mono">${formatNum(t.idesm)}</td>
+            <td class="mono">${formatNum(t.rmat)}</td>
+            <td class="mono">${formatNum(t.ifrig)}</td>
+            <td>${status}</td>
+            <td>${valor}</td>
+            <td style="white-space:nowrap">${acoes}</td>
+        </tr>`;
+    }).join('');
+}
+
+document.getElementById('btnCatalogo').href = `/estoque/${GRUPO_ID}/catalogo`;
+
+function fecharModal(id) { document.getElementById(id).style.display = 'none'; }
+
+async function loadGrupo() {
+    const params = new URLSearchParams();
+    const q = document.getElementById('fBusca').value.trim();
+    if (q) params.set('q', q);
+    if (document.getElementById('fTodos').checked) params.set('todos', '1');
+
+    const data = await API.get(`/api/estoque/grupos/${GRUPO_ID}?${params}`);
+    if (!data || data.erro) return;
+
+    document.getElementById('grupoNome').textContent = data.grupo.nome;
+    document.title = `${data.grupo.nome} – Porto do Engenho`;
+
+    const k = data.kpis;
+    document.getElementById('gkDisp').textContent = k.disp;
+    document.getElementById('gkVend').textContent = k.vend;
+    document.getElementById('gkIcia').textContent = formatNum(k.avg_icia);
+    document.getElementById('gkIdesm').textContent = formatNum(k.avg_idesm);
+    document.getElementById('gkRmat').textContent = formatNum(k.avg_rmat);
+    document.getElementById('gkVenda').textContent = k.avg_venda ? `R$ ${Number(k.avg_venda).toLocaleString('pt-BR')}` : '—';
+    document.getElementById('gkVendaTotal').textContent = k.total_venda ? `Total: R$ ${Number(k.total_venda).toLocaleString('pt-BR')}` : '';
+
+    allTouros = data.data;
+    renderTouros();
+}
+
+// Edição
+function abrirEdicao(t) {
+    document.getElementById('editId').value = t.id;
+    document.getElementById('edBrinco').value = t.brinco || '';
+    document.getElementById('edNasc').value = t.data_nasc || '';
+    document.getElementById('edPai').value = t.pai || '';
+    document.getElementById('edAvoPat').value = t.avo_paterno || '';
+    document.getElementById('edAvoMat').value = t.avo_materno || '';
+    document.getElementById('edPeso').value = t.peso || '';
+    document.getElementById('edDataPes').value = t.data_pesagem || '';
+    document.getElementById('edIcia').value = t.iciagen || '';
+    document.getElementById('edIdesm').value = t.idesm || '';
+    document.getElementById('edRmat').value = t.rmat || '';
+    document.getElementById('edIfrig').value = t.ifrig || '';
+    document.getElementById('edObs').value = t.obs || '';
+    document.getElementById('editModal').style.display = 'flex';
+}
+
+async function salvarEdicao() {
+    const id = document.getElementById('editId').value;
+    const body = {
+        brinco: document.getElementById('edBrinco').value,
+        data_nasc: document.getElementById('edNasc').value,
+        pai: document.getElementById('edPai').value,
+        avo_paterno: document.getElementById('edAvoPat').value,
+        avo_materno: document.getElementById('edAvoMat').value,
+        peso: document.getElementById('edPeso').value,
+        data_pesagem: document.getElementById('edDataPes').value,
+        iciagen: document.getElementById('edIcia').value,
+        idesm: document.getElementById('edIdesm').value,
+        rmat: document.getElementById('edRmat').value,
+        ifrig: document.getElementById('edIfrig').value,
+        obs: document.getElementById('edObs').value,
+    };
+    await fetch(`/api/estoque/${id}`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(body)
+    });
+    fecharModal('editModal');
+    loadGrupo();
+}
+
+// Venda
+function abrirVenda(id, brinco) {
+    vendaTouroId = id;
+    document.getElementById('vendaBrinco').textContent = brinco;
+    document.getElementById('vendaValor').value = '';
+    document.getElementById('vendaModal').style.display = 'flex';
+    document.getElementById('vendaValor').focus();
+}
+
+async function confirmarVenda() {
+    const valor = parseFloat(document.getElementById('vendaValor').value) || null;
+    await fetch(`/api/estoque/${vendaTouroId}/vender`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({valor})
+    });
+    fecharModal('vendaModal');
+    loadGrupo();
+}
+
+async function devolver(id) {
+    if (!confirm('Devolver este touro ao catálogo?')) return;
+    await fetch(`/api/estoque/${id}/devolver`, {method:'POST'});
+    loadGrupo();
+}
+
+async function remover(id) {
+    if (!confirm('Remover este touro do estoque?')) return;
+    await API.del(`/api/estoque/${id}`);
+    loadGrupo();
+}
+
+// Import
+document.getElementById('importForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const res = await fetch(`/api/estoque/grupos/${GRUPO_ID}/importar`, {method:'POST', body:fd});
+    const data = await res.json();
+    if (data.ok) {
+        document.getElementById('importResult').style.display = 'block';
+        document.getElementById('importResult').textContent = `${data.n_touros} touros importados!`;
+        e.target.reset();
+        loadGrupo();
+        setTimeout(() => { fecharModal('importModal'); document.getElementById('importResult').style.display = 'none'; }, 2000);
+    } else {
+        alert(data.erro || 'Erro na importação');
+    }
+});
+
+async function renomearGrupo() {
+    const atual = document.getElementById('grupoNome').textContent;
+    const novo = prompt('Novo nome da safra:', atual);
+    if (!novo || !novo.trim() || novo.trim() === atual) return;
+    const res = await fetch(`/api/estoque/grupos/${GRUPO_ID}/renomear`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({nome: novo.trim()})
+    });
+    const data = await res.json();
+    if (data.ok) {
+        loadGrupo();
+    } else {
+        alert(data.erro || 'Erro ao renomear');
+    }
+}
+
+loadGrupo();
+</script>
+{% endblock %}
