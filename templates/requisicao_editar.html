@@ -1,0 +1,174 @@
+{% extends "base.html" %}
+{% block title %}Editar Requisição{% endblock %}
+{% block page_title %}Editar Requisição{% endblock %}
+
+{% block content %}
+<style>
+    .form-wrap { max-width:760px; background:#fff; border:1px solid var(--gray10); border-radius:6px; padding:1.5rem 1.6rem; }
+    .form-grid { display:grid; grid-template-columns:1fr 1fr; gap:1rem 1.2rem; }
+    .form-grid .full { grid-column:1/-1; }
+    .form-field label { display:block; font-size:.75rem; text-transform:uppercase; letter-spacing:.04em; color:var(--gray60); margin-bottom:.3rem; font-weight:600; }
+    .form-field input, .form-field textarea {
+        width:100%; padding:.55rem .7rem; border:1px solid var(--gray20); border-radius:4px; font-size:.9rem; font-family:inherit; background:#fff; color:var(--black);
+    }
+    .form-field input:focus, .form-field textarea:focus { outline:none; border-color:var(--red); }
+    .form-field textarea { min-height:80px; resize:vertical; }
+
+    .itens-h { margin:1.2rem 0 .5rem; display:flex; justify-content:space-between; align-items:center; }
+    .itens-h h3 { font-size:.95rem; color:var(--black); }
+    .itens-h button { background:#fff; border:1px dashed var(--gray20); padding:.3rem .8rem; border-radius:4px; font-size:.8rem; cursor:pointer; color:var(--red); font-weight:600; }
+
+    .item-row { display:grid; grid-template-columns:36px 140px 1fr 32px; gap:.5rem; align-items:center; margin-bottom:.45rem; }
+    .item-row .idx { color:var(--gray40); text-align:center; font-size:.85rem; font-weight:600; }
+    .item-row input { padding:.48rem .6rem; border:1px solid var(--gray20); border-radius:4px; font-size:.88rem; }
+    .item-row .remove-btn { background:none; border:none; color:var(--gray40); font-size:1.1rem; cursor:pointer; }
+    .item-row .remove-btn:hover { color:var(--red); }
+
+    .form-actions { margin-top:1.5rem; display:flex; gap:.8rem; justify-content:flex-end; }
+    .btn-primary { background:var(--red); color:#fff; border:none; padding:.7rem 1.5rem; border-radius:4px; font-weight:600; font-size:.9rem; cursor:pointer; }
+    .btn-primary:hover { background:var(--red-dk); }
+    .btn-primary:disabled { opacity:.6; cursor:wait; }
+    .btn-secondary { background:#fff; color:var(--black); border:1px solid var(--gray20); padding:.7rem 1.3rem; border-radius:4px; font-weight:500; font-size:.9rem; cursor:pointer; text-decoration:none; }
+
+    .err { background:#FBD7D9; color:#A8151A; padding:.7rem; border-radius:4px; margin-bottom:1rem; display:none; }
+    .info { background:#FFF4D6; color:#8A6A00; padding:.6rem .8rem; border-radius:4px; font-size:.85rem; margin-bottom:1rem; }
+</style>
+
+<div class="form-wrap">
+    <div class="info">📝 Edição permitida apenas enquanto a requisição estiver <b>pendente</b>. Após a autorização, ela fica bloqueada.</div>
+    <div class="err" id="err"></div>
+    <form id="frmReq" onsubmit="return salvar(event)">
+        <div class="form-grid">
+            <div class="form-field">
+                <label>Responsável pela solicitação</label>
+                <input type="text" id="responsavel">
+            </div>
+            <div class="form-field">
+                <label>Funcionário que fará a retirada *</label>
+                <input type="text" id="funcionario_retirada" required>
+            </div>
+            <div class="form-field full">
+                <label>Fornecedor *</label>
+                <input type="text" id="fornecedor" required>
+            </div>
+        </div>
+
+        <div class="itens-h">
+            <h3>Materiais necessários *</h3>
+            <button type="button" onclick="addItem()">+ Adicionar item</button>
+        </div>
+        <div id="itens"></div>
+        <datalist id="catalogItens"></datalist>
+
+        <div class="form-field" style="margin-top:1rem;">
+            <label>Observações</label>
+            <textarea id="observacoes"></textarea>
+        </div>
+
+        <div class="form-actions">
+            <a href="/requisicoes/{{ req_id }}" class="btn-secondary">Cancelar</a>
+            <button type="submit" class="btn-primary" id="btnEnv">Salvar alterações</button>
+        </div>
+    </form>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const REQ_ID = {{ req_id }};
+const itensDiv = document.getElementById('itens');
+const catalogMap = new Map();
+
+async function carregarCatalogo() {
+    const data = await API.get('/api/itens-catalogo');
+    if (!data || !data.itens) return;
+    const dl = document.getElementById('catalogItens');
+    dl.innerHTML = data.itens.map(i => {
+        catalogMap.set(i.nome.toUpperCase(), i.unidade || '');
+        const label = i.unidade ? `${i.nome} (${i.unidade})` : i.nome;
+        return `<option value="${i.nome.replace(/"/g,'&quot;')}" label="${label.replace(/"/g,'&quot;')}">`;
+    }).join('');
+}
+
+function addItem(desc = '', qtd = '') {
+    const i = itensDiv.children.length + 1;
+    const row = document.createElement('div');
+    row.className = 'item-row';
+    row.innerHTML = `
+        <span class="idx">${i}.</span>
+        <input type="text" class="qtd" placeholder="Qtd" value="${qtd.replace(/"/g,'&quot;')}">
+        <input type="text" class="desc" placeholder="Descrição do item" value="${desc.replace(/"/g,'&quot;')}" list="catalogItens" autocomplete="off">
+        <button type="button" class="remove-btn" onclick="removeItem(this)" title="Remover">×</button>
+    `;
+    itensDiv.appendChild(row);
+    const descInput = row.querySelector('.desc');
+    const qtdInput  = row.querySelector('.qtd');
+    descInput.addEventListener('change', () => {
+        const key = descInput.value.trim().toUpperCase();
+        const unid = catalogMap.get(key);
+        if (unid && !qtdInput.value.trim()) qtdInput.value = unid;
+    });
+}
+function removeItem(btn) {
+    btn.closest('.item-row').remove();
+    [...itensDiv.children].forEach((r, i) => r.querySelector('.idx').textContent = (i+1) + '.');
+    if (!itensDiv.children.length) addItem();
+}
+
+async function carregar() {
+    await carregarCatalogo();
+    const d = await API.get('/api/requisicoes/' + REQ_ID);
+    if (!d || d.erro) { window.location.href = '/requisicoes/' + REQ_ID; return; }
+    if (d.requisicao.status !== 'pendente') {
+        alert('Esta requisição não está mais pendente — não pode ser editada.');
+        window.location.href = '/requisicoes/' + REQ_ID;
+        return;
+    }
+    document.getElementById('responsavel').value = d.requisicao.responsavel || '';
+    document.getElementById('funcionario_retirada').value = d.requisicao.funcionario_retirada || '';
+    document.getElementById('fornecedor').value = d.requisicao.fornecedor || '';
+    document.getElementById('observacoes').value = d.requisicao.observacoes || '';
+    itensDiv.innerHTML = '';
+    (d.itens || []).forEach(it => addItem(it.descricao || '', it.quantidade || ''));
+    if (!itensDiv.children.length) addItem();
+}
+
+async function salvar(e) {
+    e.preventDefault();
+    document.getElementById('err').style.display = 'none';
+    const btn = document.getElementById('btnEnv');
+    btn.disabled = true; btn.textContent = 'Salvando...';
+
+    const itens = [...itensDiv.children].map(r => ({
+        descricao: r.querySelector('.desc').value,
+        quantidade: r.querySelector('.qtd').value,
+    })).filter(x => x.descricao.trim());
+
+    const payload = {
+        responsavel: document.getElementById('responsavel').value,
+        funcionario_retirada: document.getElementById('funcionario_retirada').value,
+        fornecedor: document.getElementById('fornecedor').value,
+        observacoes: document.getElementById('observacoes').value,
+        itens,
+    };
+
+    const res = await fetch('/api/requisicoes/' + REQ_ID, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+        const el = document.getElementById('err');
+        el.textContent = data.erro || 'Erro ao salvar.';
+        el.style.display = 'block';
+        btn.disabled = false; btn.textContent = 'Salvar alterações';
+        return false;
+    }
+    window.location.href = '/requisicoes/' + REQ_ID;
+    return false;
+}
+
+carregar();
+</script>
+{% endblock %}
