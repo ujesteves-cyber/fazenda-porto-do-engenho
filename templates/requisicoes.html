@@ -49,6 +49,21 @@
     tr.expansion .qtd { color:var(--red); font-weight:600; min-width:85px; }
     tr.expansion .obs { margin-top:.6rem; font-size:.82rem; color:var(--gray60); background:#fff; border-left:3px solid var(--gray20); padding:.5rem .7rem; border-radius:0 3px 3px 0; }
     tr.expansion .err { color:var(--red); font-size:.85rem; }
+
+    .req-table-wrap { overflow-x:auto; -webkit-overflow-scrolling:touch; }
+
+    @media (max-width: 768px) {
+        .req-head { flex-direction:column; align-items:stretch; gap:.8rem; }
+        .req-filtros { justify-content:flex-start; gap:.3rem; overflow-x:auto; padding-bottom:.3rem; }
+        .req-filtros button { flex-shrink:0; font-size:.78rem; padding:.4rem .6rem; }
+        #escopoLbl { margin-left:.5rem !important; }
+        .req-nova-btn { text-align:center; display:block; }
+        .req-table { min-width:680px; }
+        .batch-bar { flex-direction:column; align-items:stretch; }
+        .batch-bar input[type=text] { min-width:0; width:100%; }
+        .batch-bar button { width:100%; }
+        .btn-expand { padding:.2rem .7rem; }
+    }
 </style>
 
 <div class="req-head">

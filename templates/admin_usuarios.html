@@ -42,18 +42,29 @@
     .alert { padding:.55rem .7rem; border-radius:4px; font-size:.85rem; margin-bottom:.7rem; display:none; }
     .alert.err { background:#FBD7D9; color:#A8151A; }
     .alert.ok  { background:#D6F4DE; color:#1A7A3F; }
+
+    .table-scroll { overflow-x:auto; -webkit-overflow-scrolling:touch; }
+
+    @media (max-width: 640px) {
+        .card { padding:1rem; }
+        table.users { min-width:560px; }
+        .actions-cell { gap:.25rem; }
+        .btn-mini { padding:.25rem .45rem; font-size:.7rem; }
+    }
 </style>
 
 <div class="adm-wrap">
     <div>
         <div class="card">
             <h3>Usuários cadastrados</h3>
-            <table class="users">
-                <thead><tr>
-                    <th>Nome</th><th>E-mail</th><th>Papel</th><th>Status</th><th></th>
-                </tr></thead>
-                <tbody id="tbody"><tr><td colspan="5" style="padding:1.5rem;text-align:center;color:var(--gray40);">Carregando...</td></tr></tbody>
-            </table>
+            <div class="table-scroll">
+                <table class="users">
+                    <thead><tr>
+                        <th>Nome</th><th>E-mail</th><th>Papel</th><th>Status</th><th></th>
+                    </tr></thead>
+                    <tbody id="tbody"><tr><td colspan="5" style="padding:1.5rem;text-align:center;color:var(--gray40);">Carregando...</td></tr></tbody>
+                </table>
+            </div>
         </div>
     </div>
 

@@ -56,6 +56,20 @@
 
     .assin-input { width:100%; padding:.55rem .7rem; border:1px solid var(--gray20); border-radius:4px; font-size:.88rem; margin-top:.4rem; }
     .err { background:#FBD7D9; color:#A8151A; padding:.55rem .7rem; border-radius:4px; margin:.6rem 0; font-size:.85rem; display:none; }
+
+    .actions { flex-wrap:wrap; }
+
+    @media (max-width: 640px) {
+        .card { padding:1rem; }
+        .det-title { font-size:1.1rem; }
+        .meta-grid { grid-template-columns:1fr; gap:.15rem 0; }
+        .meta-grid .k { font-size:.72rem; text-transform:uppercase; letter-spacing:.03em; margin-top:.4rem; }
+        .meta-grid .v { padding-bottom:.1rem; }
+        .itens-list li { flex-wrap:wrap; }
+        .actions { gap:.4rem; }
+        .actions .btn { flex:1 1 auto; text-align:center; min-width:130px; }
+        .hist .when { font-size:.7rem; }
+    }
 </style>
 
 <div style="margin-bottom:1rem;">
