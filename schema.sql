@@ -174,11 +174,25 @@ CREATE TABLE IF NOT EXISTS requisicoes_compra (
 
 -- Itens de cada requisição (1..N)
 CREATE TABLE IF NOT EXISTS requisicoes_itens (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    requisicao_id     INTEGER NOT NULL REFERENCES requisicoes_compra(id) ON DELETE CASCADE,
+    ordem             INTEGER NOT NULL,
+    descricao         TEXT NOT NULL,
+    quantidade        TEXT,
+    item_catalogo_id  INTEGER REFERENCES itens_catalogo(id)
+);
+
+-- Catálogo de itens (populado automaticamente a partir das requisições)
+CREATE TABLE IF NOT EXISTS itens_catalogo (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
-    requisicao_id  INTEGER NOT NULL REFERENCES requisicoes_compra(id) ON DELETE CASCADE,
-    ordem          INTEGER NOT NULL,
-    descricao      TEXT NOT NULL,
-    quantidade     TEXT
+    nome           TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    unidade        TEXT,
+    categoria      TEXT,
+    observacoes    TEXT,
+    n_pedidos      INTEGER DEFAULT 0,
+    ultimo_uso     DATETIME,
+    ativo          INTEGER DEFAULT 1,
+    created_at     DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Histórico de ações (trilha de auditoria)
@@ -204,3 +218,5 @@ CREATE INDEX IF NOT EXISTS idx_req_solic  ON requisicoes_compra(solicitante_id);
 CREATE INDEX IF NOT EXISTS idx_req_aprov  ON requisicoes_compra(aprovador_id);
 CREATE INDEX IF NOT EXISTS idx_req_itens  ON requisicoes_itens(requisicao_id);
 CREATE INDEX IF NOT EXISTS idx_req_hist   ON requisicoes_historico(requisicao_id);
+CREATE INDEX IF NOT EXISTS idx_catalogo_nome ON itens_catalogo(nome);
+-- idx_req_itens_cat criado em init_db após ALTER TABLE (ordem de migração)

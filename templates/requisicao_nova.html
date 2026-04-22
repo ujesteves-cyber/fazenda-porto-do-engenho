@@ -56,6 +56,7 @@
             <button type="button" onclick="addItem()">+ Adicionar item</button>
         </div>
         <div id="itens"></div>
+        <datalist id="catalogItens"></datalist>
 
         <div class="form-field" style="margin-top:1rem;">
             <label>Observações</label>
@@ -73,6 +74,19 @@
 {% block scripts %}
 <script>
 const itensDiv = document.getElementById('itens');
+const catalogMap = new Map(); // nome (upper) → unidade
+
+async function carregarCatalogo() {
+    const data = await API.get('/api/itens-catalogo');
+    if (!data || !data.itens) return;
+    const dl = document.getElementById('catalogItens');
+    dl.innerHTML = data.itens.map(i => {
+        catalogMap.set(i.nome.toUpperCase(), i.unidade || '');
+        const label = i.unidade ? `${i.nome} (${i.unidade})` : i.nome;
+        return `<option value="${i.nome.replace(/"/g,'&quot;')}" label="${label.replace(/"/g,'&quot;')}">`;
+    }).join('');
+}
+carregarCatalogo();
 
 function addItem(desc = '', qtd = '') {
     const i = itensDiv.children.length + 1;
@@ -81,10 +95,18 @@ function addItem(desc = '', qtd = '') {
     row.innerHTML = `
         <span class="idx">${i}.</span>
         <input type="text" class="qtd" placeholder="Qtd (ex: 1 UN)" value="${qtd}">
-        <input type="text" class="desc" placeholder="Descrição do item" value="${desc}">
+        <input type="text" class="desc" placeholder="Descrição do item" value="${desc}" list="catalogItens" autocomplete="off">
         <button type="button" class="remove-btn" onclick="removeItem(this)" title="Remover">×</button>
     `;
     itensDiv.appendChild(row);
+    // Auto-preenche unidade quando o usuário escolhe um item do catálogo
+    const descInput = row.querySelector('.desc');
+    const qtdInput  = row.querySelector('.qtd');
+    descInput.addEventListener('change', () => {
+        const key = descInput.value.trim().toUpperCase();
+        const unid = catalogMap.get(key);
+        if (unid && !qtdInput.value.trim()) qtdInput.value = unid;
+    });
 }
 function removeItem(btn) {
     btn.closest('.item-row').remove();

@@ -1,0 +1,183 @@
+{% extends "base.html" %}
+{% block title %}Relatório de Autorizações{% endblock %}
+{% block page_title %}Relatório de Autorizações de Compra{% endblock %}
+
+{% block content %}
+<style>
+    .filtros { background:#fff; border:1px solid var(--gray10); border-radius:6px; padding:1rem 1.2rem; margin-bottom:1rem; display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:.6rem .8rem; align-items:end; }
+    .filtros .field label { display:block; font-size:.7rem; text-transform:uppercase; letter-spacing:.04em; color:var(--gray60); margin-bottom:.25rem; font-weight:600; }
+    .filtros .field input, .filtros .field select { width:100%; padding:.48rem .6rem; border:1px solid var(--gray20); border-radius:4px; font-size:.88rem; background:#fff; }
+    .filtros .btns { display:flex; gap:.5rem; justify-content:flex-end; grid-column:1/-1; }
+    .btn { border:none; padding:.55rem 1.1rem; border-radius:4px; font-weight:600; font-size:.85rem; cursor:pointer; text-decoration:none; display:inline-block; }
+    .btn-primary { background:var(--red); color:#fff; }
+    .btn-ghost   { background:#fff; color:var(--black); border:1px solid var(--gray20); }
+
+    .kpis { display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:.8rem; margin-bottom:1rem; }
+    .kpi { background:#fff; border:1px solid var(--gray10); border-radius:6px; padding:.9rem 1rem; }
+    .kpi .label { font-size:.7rem; text-transform:uppercase; letter-spacing:.05em; color:var(--gray60); }
+    .kpi .val { font-size:1.8rem; font-weight:700; color:var(--black); font-variant-numeric:tabular-nums; }
+
+    .tabs { display:flex; gap:.3rem; border-bottom:1px solid var(--gray10); margin-bottom:0; }
+    .tabs button { background:none; border:none; padding:.7rem 1rem; font-size:.85rem; color:var(--gray60); cursor:pointer; border-bottom:3px solid transparent; font-weight:600; }
+    .tabs button.active { color:var(--red); border-bottom-color:var(--red); }
+
+    .tabel-wrap { background:#fff; border:1px solid var(--gray10); border-top:none; border-radius:0 0 6px 6px; overflow:hidden; }
+    table.rel { width:100%; border-collapse:collapse; font-size:.86rem; }
+    table.rel th { background:#F7F7F7; text-align:left; padding:.6rem .8rem; font-size:.7rem; text-transform:uppercase; letter-spacing:.04em; color:var(--gray60); border-bottom:1px solid var(--gray10); }
+    table.rel td { padding:.6rem .8rem; border-bottom:1px solid var(--gray5); vertical-align:top; }
+    table.rel tr:hover td { background:#FAFAFA; }
+    table.rel a { color:var(--black); text-decoration:none; font-weight:600; }
+    table.rel .num { font-weight:600; color:var(--red); font-variant-numeric:tabular-nums; text-align:right; }
+    .empty { padding:2rem; text-align:center; color:var(--gray40); }
+</style>
+
+<div class="filtros">
+    <div class="field">
+        <label>Data inicial</label>
+        <input type="date" id="f_ini">
+    </div>
+    <div class="field">
+        <label>Data final</label>
+        <input type="date" id="f_fim">
+    </div>
+    <div class="field">
+        <label>Item do catálogo</label>
+        <select id="f_item"><option value="">Todos</option></select>
+    </div>
+    <div class="field">
+        <label>Fornecedor</label>
+        <input type="text" id="f_forn" placeholder="Contém...">
+    </div>
+    <div class="btns">
+        <button class="btn btn-ghost" onclick="limpar()">Limpar</button>
+        <button class="btn btn-primary" onclick="aplicar()">Filtrar</button>
+        <a class="btn btn-ghost" id="btnCsv">Exportar CSV</a>
+    </div>
+</div>
+
+<div class="kpis">
+    <div class="kpi"><div class="label">Autorizações</div><div class="val" id="kpi_a">-</div></div>
+    <div class="kpi"><div class="label">Itens autorizados</div><div class="val" id="kpi_i">-</div></div>
+    <div class="kpi"><div class="label">Itens distintos</div><div class="val" id="kpi_d">-</div></div>
+</div>
+
+<div class="tabs">
+    <button id="tab_det" class="active" onclick="setTab('det')">Detalhado</button>
+    <button id="tab_res" onclick="setTab('res')">Resumo por item</button>
+</div>
+
+<div class="tabel-wrap">
+    <div id="view_det">
+        <table class="rel">
+            <thead><tr>
+                <th>Data</th><th>Nº</th><th>Solicitante</th><th>Fornecedor</th>
+                <th>Funcionário</th><th>Item</th><th>Qtd</th><th>Autorizado por</th>
+            </tr></thead>
+            <tbody id="tbDet"><tr><td colspan="8" class="empty">Carregando...</td></tr></tbody>
+        </table>
+    </div>
+    <div id="view_res" style="display:none;">
+        <table class="rel">
+            <thead><tr>
+                <th>Item</th><th>Unidade</th><th class="num">Pedidos</th>
+                <th>Última autorização</th><th>Fornecedores</th>
+            </tr></thead>
+            <tbody id="tbRes"><tr><td colspan="5" class="empty">—</td></tr></tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function fmtDate(s, withTime = true) {
+    if (!s) return '-';
+    const d = new Date(s.replace(' ', 'T'));
+    if (isNaN(d)) return s;
+    const day = d.toLocaleDateString('pt-BR');
+    if (!withTime) return day;
+    return `${day} ${d.toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'})}`;
+}
+function esc(v) { return v == null ? '' : String(v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+async function carregarItens() {
+    const data = await API.get('/api/itens-catalogo');
+    if (!data) return;
+    const sel = document.getElementById('f_item');
+    for (const it of data.itens) {
+        const opt = document.createElement('option');
+        opt.value = it.id;
+        opt.textContent = it.unidade ? `${it.nome} (${it.unidade})` : it.nome;
+        sel.appendChild(opt);
+    }
+}
+
+function params() {
+    const p = new URLSearchParams();
+    const ini = document.getElementById('f_ini').value;
+    const fim = document.getElementById('f_fim').value;
+    const item = document.getElementById('f_item').value;
+    const forn = document.getElementById('f_forn').value.trim();
+    if (ini)  p.set('data_ini', ini);
+    if (fim)  p.set('data_fim', fim);
+    if (item) p.set('item_id', item);
+    if (forn) p.set('fornecedor', forn);
+    return p;
+}
+
+async function aplicar() {
+    const p = params().toString();
+    document.getElementById('btnCsv').href = '/api/requisicoes/relatorio.csv' + (p ? '?' + p : '');
+    const data = await API.get('/api/requisicoes/relatorio' + (p ? '?' + p : ''));
+    if (!data) return;
+
+    document.getElementById('kpi_a').textContent = data.total_autorizacoes;
+    document.getElementById('kpi_i').textContent = data.total_itens;
+    document.getElementById('kpi_d').textContent = data.resumo.length;
+
+    // Detalhado
+    const tbD = document.getElementById('tbDet');
+    tbD.innerHTML = data.linhas.length
+        ? data.linhas.map(r => `<tr>
+            <td>${fmtDate(r.data_decisao)}</td>
+            <td><a href='/requisicoes/${r.req_id}'>${esc(r.numero)}</a></td>
+            <td>${esc(r.solicitante_nome)}</td>
+            <td>${esc(r.fornecedor)}</td>
+            <td>${esc(r.funcionario_retirada)}</td>
+            <td>${esc(r.item_nome || r.descricao)}</td>
+            <td>${esc(r.quantidade || '')}</td>
+            <td>${esc(r.aprovador_nome)}</td>
+          </tr>`).join('')
+        : '<tr><td colspan="8" class="empty">Nenhuma autorização no período.</td></tr>';
+
+    // Resumo
+    const tbR = document.getElementById('tbRes');
+    tbR.innerHTML = data.resumo.length
+        ? data.resumo.map(r => `<tr>
+            <td>${esc(r.item_nome)}</td>
+            <td>${esc(r.unidade || '')}</td>
+            <td class='num'>${r.n_pedidos}</td>
+            <td>${fmtDate(r.ultima_autorizacao)}</td>
+            <td>${esc(r.fornecedores || '').split(',').join(', ')}</td>
+          </tr>`).join('')
+        : '<tr><td colspan="5" class="empty">—</td></tr>';
+}
+
+function limpar() {
+    document.getElementById('f_ini').value = '';
+    document.getElementById('f_fim').value = '';
+    document.getElementById('f_item').value = '';
+    document.getElementById('f_forn').value = '';
+    aplicar();
+}
+
+function setTab(which) {
+    document.getElementById('tab_det').classList.toggle('active', which === 'det');
+    document.getElementById('tab_res').classList.toggle('active', which === 'res');
+    document.getElementById('view_det').style.display = which === 'det' ? '' : 'none';
+    document.getElementById('view_res').style.display = which === 'res' ? '' : 'none';
+}
+
+carregarItens().then(aplicar);
+</script>
+{% endblock %}
