@@ -32,6 +32,16 @@
 
     .err { background:#FBD7D9; color:#A8151A; padding:.7rem; border-radius:4px; margin-bottom:1rem; display:none; }
     .info { background:#FFF4D6; color:#8A6A00; padding:.6rem .8rem; border-radius:4px; font-size:.85rem; margin-bottom:1rem; }
+
+    @media (max-width: 640px) {
+        .form-wrap { padding:1rem; }
+        .form-grid { grid-template-columns:1fr; }
+        .item-row { grid-template-columns:28px 100px 1fr 28px; gap:.35rem; }
+        .item-row input { padding:.42rem .5rem; font-size:.85rem; }
+        .itens-h h3 { font-size:.88rem; }
+        .form-actions { flex-direction:column-reverse; }
+        .form-actions .btn-primary, .form-actions .btn-secondary { width:100%; text-align:center; }
+    }
 </style>
 
 <div class="form-wrap">

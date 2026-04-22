@@ -31,6 +31,16 @@
     .btn-secondary { background:#fff; color:var(--black); border:1px solid var(--gray20); padding:.7rem 1.3rem; border-radius:4px; font-weight:500; font-size:.9rem; cursor:pointer; text-decoration:none; }
 
     .err { background:#FBD7D9; color:#A8151A; padding:.7rem; border-radius:4px; margin-bottom:1rem; display:none; }
+
+    @media (max-width: 640px) {
+        .form-wrap { padding:1rem; }
+        .form-grid { grid-template-columns:1fr; }
+        .item-row { grid-template-columns:28px 100px 1fr 28px; gap:.35rem; }
+        .item-row input { padding:.42rem .5rem; font-size:.85rem; }
+        .itens-h h3 { font-size:.88rem; }
+        .form-actions { flex-direction:column-reverse; }
+        .form-actions .btn-primary, .form-actions .btn-secondary { width:100%; text-align:center; }
+    }
 </style>
 
 <div class="form-wrap">

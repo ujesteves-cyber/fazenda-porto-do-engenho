@@ -29,6 +29,22 @@
     table.rel a { color:var(--black); text-decoration:none; font-weight:600; }
     table.rel .num { font-weight:600; color:var(--red); font-variant-numeric:tabular-nums; text-align:right; }
     .empty { padding:2rem; text-align:center; color:var(--gray40); }
+
+    #view_det, #view_res { overflow-x:auto; -webkit-overflow-scrolling:touch; }
+
+    @media (max-width: 768px) {
+        .filtros { padding:.8rem; grid-template-columns:1fr 1fr; }
+        .filtros .field.wide { grid-column:1/-1; }
+        .filtros .btns { justify-content:stretch; flex-direction:column; gap:.4rem; }
+        .filtros .btns .btn { width:100%; text-align:center; }
+        .kpis { grid-template-columns:repeat(3, 1fr); gap:.4rem; }
+        .kpi { padding:.6rem .7rem; }
+        .kpi .val { font-size:1.3rem; }
+        .tabs { overflow-x:auto; }
+        .tabs button { flex-shrink:0; font-size:.8rem; padding:.55rem .8rem; }
+        table.rel { min-width:640px; }
+        table.rel.resumo { min-width:520px; }
+    }
 </style>
 
 <div class="filtros">
@@ -40,11 +56,11 @@
         <label>Data final</label>
         <input type="date" id="f_fim">
     </div>
-    <div class="field">
+    <div class="field wide">
         <label>Item do catálogo</label>
         <select id="f_item"><option value="">Todos</option></select>
     </div>
-    <div class="field">
+    <div class="field wide">
         <label>Fornecedor</label>
         <input type="text" id="f_forn" placeholder="Contém...">
     </div>
