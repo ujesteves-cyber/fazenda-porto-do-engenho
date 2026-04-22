@@ -1,0 +1,183 @@
+{% extends "base.html" %}
+{% block title %}Requisições de Compra{% endblock %}
+{% block page_title %}Requisições de Compra{% endblock %}
+
+{% block content %}
+<style>
+    .req-head { display:flex; justify-content:space-between; align-items:center; gap:1rem; flex-wrap:wrap; margin-bottom:1rem; }
+    .req-filtros { display:flex; gap:.5rem; flex-wrap:wrap; align-items:center; }
+    .req-filtros select, .req-filtros button { padding:.5rem .8rem; border:1px solid var(--gray20); background:#fff; border-radius:4px; font-size:.85rem; cursor:pointer; }
+    .req-filtros button.active { background:var(--red); color:#fff; border-color:var(--red); }
+    .req-nova-btn { background:var(--red); color:#fff; border:none; padding:.6rem 1.2rem; border-radius:4px; text-decoration:none; font-weight:600; font-size:.9rem; }
+    .req-nova-btn:hover { background:var(--red-dk); }
+
+    .req-table-wrap { background:#fff; border:1px solid var(--gray10); border-radius:6px; overflow:hidden; }
+    .req-table { width:100%; border-collapse:collapse; font-size:.88rem; }
+    .req-table th { background:#F7F7F7; text-align:left; padding:.7rem .8rem; font-size:.72rem; text-transform:uppercase; letter-spacing:.04em; color:var(--gray60); border-bottom:1px solid var(--gray10); }
+    .req-table td { padding:.7rem .8rem; border-bottom:1px solid var(--gray5); }
+    .req-table tr:hover td { background:#FAFAFA; }
+    .req-table a { color:var(--black); text-decoration:none; font-weight:600; }
+    .req-table a:hover { color:var(--red); }
+
+    .status-badge { display:inline-block; padding:.18rem .55rem; border-radius:3px; font-size:.72rem; font-weight:600; text-transform:uppercase; letter-spacing:.03em; }
+    .status-pendente   { background:#FFF4D6; color:#8A6A00; }
+    .status-aprovada   { background:#D6F4DE; color:#1A7A3F; }
+    .status-rejeitada  { background:#FBD7D9; color:#A8151A; }
+    .status-cancelada  { background:#E8E8E8; color:#666; }
+
+    .batch-bar { display:none; background:#111; color:#fff; padding:.8rem 1rem; border-radius:6px; margin-bottom:.8rem; align-items:center; gap:.8rem; flex-wrap:wrap; }
+    .batch-bar.active { display:flex; }
+    .batch-bar input[type=text] { flex:1; min-width:220px; padding:.55rem .7rem; border:1px solid #333; background:#1A1A1A; color:#fff; border-radius:4px; font-size:.9rem; }
+    .batch-bar button { background:var(--ok); color:#fff; border:none; padding:.55rem 1.2rem; border-radius:4px; font-weight:600; cursor:pointer; font-size:.88rem; }
+    .batch-bar button:hover { background:#156732; }
+    .batch-bar .count { font-size:.85rem; opacity:.8; }
+
+    .empty { padding:3rem; text-align:center; color:var(--gray40); font-size:.9rem; }
+</style>
+
+<div class="req-head">
+    <div class="req-filtros">
+        <button class="filtro-btn active" data-status="">Todas</button>
+        <button class="filtro-btn" data-status="pendente">Pendentes</button>
+        <button class="filtro-btn" data-status="aprovada">Aprovadas</button>
+        <button class="filtro-btn" data-status="rejeitada">Rejeitadas</button>
+        <button class="filtro-btn" data-status="cancelada">Canceladas</button>
+        <label id="escopoLbl" style="display:none;margin-left:.8rem;font-size:.85rem;">
+            <input type="checkbox" id="escopoMeus"> Apenas minhas
+        </label>
+    </div>
+    <a href="/requisicoes/nova" class="req-nova-btn">+ Nova Requisição</a>
+</div>
+
+<div class="batch-bar" id="batchBar">
+    <span class="count"><strong id="nSel">0</strong> selecionada(s)</span>
+    <input type="text" id="assinaturaLote" placeholder="Assinatura (seu nome completo)" autocomplete="off">
+    <button onclick="aprovarLote()">Assinar em lote</button>
+    <button style="background:#444" onclick="limparSelecao()">Limpar</button>
+</div>
+
+<div class="req-table-wrap">
+    <table class="req-table">
+        <thead>
+            <tr>
+                <th id="colSel" style="width:36px;display:none;"></th>
+                <th>Nº</th>
+                <th>Data</th>
+                <th>Solicitante</th>
+                <th>Fornecedor</th>
+                <th>Funcionário (retirada)</th>
+                <th>Itens</th>
+                <th>Status</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody id="tbody"><tr><td colspan="9" class="empty">Carregando...</td></tr></tbody>
+    </table>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let IS_MASTER = false;
+let STATUS = '';
+let ESCOPO = '';
+const selecionadas = new Set();
+
+function fmtDate(s) {
+    if (!s) return '-';
+    const d = new Date(s.replace(' ', 'T'));
+    if (isNaN(d)) return s;
+    return d.toLocaleDateString('pt-BR') + ' ' + d.toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'});
+}
+
+async function carregar() {
+    const params = new URLSearchParams();
+    if (STATUS) params.set('status', STATUS);
+    if (ESCOPO) params.set('escopo', ESCOPO);
+    const data = await API.get('/api/requisicoes?' + params.toString());
+    if (!data) return;
+    IS_MASTER = data.is_master;
+    document.getElementById('colSel').style.display = IS_MASTER ? '' : 'none';
+    document.getElementById('escopoLbl').style.display = IS_MASTER ? '' : 'none';
+
+    const tb = document.getElementById('tbody');
+    if (!data.requisicoes.length) {
+        tb.innerHTML = '<tr><td colspan="9" class="empty">Nenhuma requisição encontrada.</td></tr>';
+        atualizarBatchBar();
+        return;
+    }
+    tb.innerHTML = data.requisicoes.map(r => {
+        const check = IS_MASTER && r.status === 'pendente'
+            ? `<input type="checkbox" class="sel" data-id="${r.id}" ${selecionadas.has(r.id) ? 'checked' : ''}>`
+            : '';
+        return `
+        <tr>
+            <td style="${IS_MASTER ? '' : 'display:none'}">${check}</td>
+            <td><a href="/requisicoes/${r.id}">${r.numero || '#' + r.id}</a></td>
+            <td>${fmtDate(r.data_solicitacao)}</td>
+            <td>${r.solicitante_nome || '-'}</td>
+            <td>${r.fornecedor || '-'}</td>
+            <td>${r.funcionario_retirada || '-'}</td>
+            <td>${r.n_itens}</td>
+            <td><span class="status-badge status-${r.status}">${r.status}</span></td>
+            <td><a href="/requisicoes/${r.id}">Ver →</a></td>
+        </tr>`;
+    }).join('');
+
+    tb.querySelectorAll('.sel').forEach(cb => {
+        cb.addEventListener('change', e => {
+            const id = Number(e.target.dataset.id);
+            if (e.target.checked) selecionadas.add(id); else selecionadas.delete(id);
+            atualizarBatchBar();
+        });
+    });
+    atualizarBatchBar();
+}
+
+function atualizarBatchBar() {
+    const bar = document.getElementById('batchBar');
+    document.getElementById('nSel').textContent = selecionadas.size;
+    if (IS_MASTER && selecionadas.size > 0) bar.classList.add('active');
+    else bar.classList.remove('active');
+}
+
+function limparSelecao() {
+    selecionadas.clear();
+    document.querySelectorAll('.sel').forEach(c => c.checked = false);
+    atualizarBatchBar();
+}
+
+async function aprovarLote() {
+    const assinatura = document.getElementById('assinaturaLote').value.trim();
+    if (!assinatura) { alert('Informe a assinatura.'); return; }
+    if (!selecionadas.size) return;
+    if (!confirm(`Autorizar ${selecionadas.size} requisição(ões) com a assinatura "${assinatura}"?`)) return;
+
+    const res = await fetch('/api/requisicoes/aprovar-lote', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ids: Array.from(selecionadas), assinatura})
+    });
+    const data = await res.json();
+    if (data.erro) { alert(data.erro); return; }
+    alert(`Autorizadas: ${data.aprovadas.length}\nFalhas: ${data.falhas.length}`);
+    selecionadas.clear();
+    document.getElementById('assinaturaLote').value = '';
+    carregar();
+}
+
+document.querySelectorAll('.filtro-btn').forEach(b => {
+    b.addEventListener('click', () => {
+        document.querySelectorAll('.filtro-btn').forEach(x => x.classList.remove('active'));
+        b.classList.add('active');
+        STATUS = b.dataset.status;
+        carregar();
+    });
+});
+document.getElementById('escopoMeus').addEventListener('change', e => {
+    ESCOPO = e.target.checked ? 'meus' : '';
+    carregar();
+});
+carregar();
+</script>
+{% endblock %}
