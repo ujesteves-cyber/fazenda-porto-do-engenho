@@ -1,0 +1,227 @@
+{% extends "base.html" %}
+{% block title %}Requisição{% endblock %}
+{% block page_title %}Detalhe da Requisição{% endblock %}
+
+{% block content %}
+<style>
+    .det-wrap { display:grid; grid-template-columns:1fr 360px; gap:1.5rem; }
+    @media (max-width:900px) { .det-wrap { grid-template-columns:1fr; } }
+
+    .card { background:#fff; border:1px solid var(--gray10); border-radius:6px; padding:1.3rem 1.4rem; }
+    .card h3 { font-size:.85rem; text-transform:uppercase; letter-spacing:.05em; color:var(--gray60); margin-bottom:.9rem; font-weight:600; }
+
+    .det-header { display:flex; justify-content:space-between; align-items:flex-start; gap:1rem; flex-wrap:wrap; margin-bottom:1rem; }
+    .det-title { font-size:1.3rem; font-weight:700; color:var(--black); }
+    .det-sub   { font-size:.82rem; color:var(--gray60); margin-top:.2rem; }
+
+    .meta-grid { display:grid; grid-template-columns:150px 1fr; gap:.4rem 1rem; font-size:.9rem; }
+    .meta-grid .k { color:var(--gray60); font-weight:500; }
+    .meta-grid .v { color:var(--black); }
+
+    .itens-list { list-style:none; padding:0; }
+    .itens-list li { padding:.55rem 0; border-bottom:1px solid var(--gray5); display:flex; gap:.8rem; font-size:.9rem; }
+    .itens-list li:last-child { border-bottom:none; }
+    .itens-list .ord { color:var(--gray40); width:26px; }
+    .itens-list .qtd { color:var(--red); font-weight:600; min-width:85px; }
+
+    .status-badge { display:inline-block; padding:.2rem .6rem; border-radius:3px; font-size:.75rem; font-weight:700; text-transform:uppercase; letter-spacing:.04em; }
+    .status-pendente  { background:#FFF4D6; color:#8A6A00; }
+    .status-aprovada  { background:#D6F4DE; color:#1A7A3F; }
+    .status-rejeitada { background:#FBD7D9; color:#A8151A; }
+    .status-cancelada { background:#E8E8E8; color:#666; }
+
+    .auth-card { background:#FFF7F7; border:1px solid #F5BEC0; }
+    .auth-card.aprovada { background:#F1FBF3; border-color:#BDE3C7; }
+    .auth-card.rejeitada { background:#FBF2F2; border-color:#E8B7BA; }
+    .auth-card h3 { color:var(--red); }
+    .auth-card.aprovada h3 { color:var(--ok); }
+
+    .sig { font-family:'Barlow', cursive; font-style:italic; color:var(--red); font-size:1.2rem; font-weight:600; border-top:1px solid var(--gray20); padding-top:.4rem; margin-top:.4rem; }
+
+    .hist { list-style:none; padding:0; font-size:.85rem; }
+    .hist li { padding:.55rem 0; border-bottom:1px solid var(--gray5); }
+    .hist li:last-child { border-bottom:none; }
+    .hist .when { color:var(--gray40); font-size:.75rem; margin-bottom:.15rem; }
+    .hist .who  { font-weight:600; color:var(--black); }
+    .hist .acao { display:inline-block; background:#F2F2F2; padding:.08rem .5rem; border-radius:3px; font-size:.72rem; text-transform:uppercase; margin-left:.3rem; color:var(--gray60); letter-spacing:.04em; }
+    .hist .det  { color:var(--gray60); margin-top:.1rem; }
+
+    .actions { display:flex; gap:.6rem; flex-wrap:wrap; margin-top:.8rem; }
+    .btn { border:none; padding:.55rem 1.1rem; border-radius:4px; font-weight:600; font-size:.85rem; cursor:pointer; text-decoration:none; display:inline-block; }
+    .btn-green { background:var(--ok); color:#fff; }
+    .btn-red   { background:var(--red); color:#fff; }
+    .btn-gray  { background:#fff; color:var(--black); border:1px solid var(--gray20); }
+    .btn-pdf   { background:#111; color:#fff; }
+    .btn:disabled { opacity:.5; cursor:wait; }
+
+    .assin-input { width:100%; padding:.55rem .7rem; border:1px solid var(--gray20); border-radius:4px; font-size:.88rem; margin-top:.4rem; }
+    .err { background:#FBD7D9; color:#A8151A; padding:.55rem .7rem; border-radius:4px; margin:.6rem 0; font-size:.85rem; display:none; }
+</style>
+
+<div style="margin-bottom:1rem;">
+    <a href="/requisicoes" style="color:var(--gray60); text-decoration:none; font-size:.85rem;">← Voltar para lista</a>
+</div>
+
+<div id="content"><div class="card"><p style="color:var(--gray40);">Carregando...</p></div></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const REQ_ID = {{ req_id }};
+const PAPEL_PT = { pendente: 'Pendente de autorização', aprovada: 'Autorizada', rejeitada: 'Rejeitada', cancelada: 'Cancelada' };
+
+function fmtDate(s) {
+    if (!s) return '-';
+    const d = new Date(s.replace(' ', 'T'));
+    if (isNaN(d)) return s;
+    return d.toLocaleDateString('pt-BR') + ' ' + d.toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'});
+}
+function esc(v) { return v == null ? '' : String(v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+async function carregar() {
+    const data = await API.get('/api/requisicoes/' + REQ_ID);
+    if (!data) return;
+    if (data.erro) { document.getElementById('content').innerHTML = '<div class="card">'+esc(data.erro)+'</div>'; return; }
+    render(data);
+}
+
+function render(d) {
+    const r = d.requisicao;
+    const itens = d.itens;
+    const hist = d.historico;
+    const isMaster = d.is_master;
+
+    const itensHtml = itens.map(it => `
+        <li><span class="ord">${it.ordem}.</span><span class="qtd">${esc(it.quantidade) || '-'}</span><span>${esc(it.descricao)}</span></li>
+    `).join('') || '<li style="color:var(--gray40)">Sem itens.</li>';
+
+    const histHtml = hist.map(h => `
+        <li>
+            <div class="when">${fmtDate(h.created_at)}</div>
+            <div><span class="who">${esc(h.usuario_nome) || 'Sistema'}</span><span class="acao">${esc(h.acao)}</span></div>
+            ${h.detalhes ? `<div class="det">${esc(h.detalhes)}</div>` : ''}
+        </li>
+    `).join('') || '<li style="color:var(--gray40)">Nenhum evento.</li>';
+
+    let authHtml = '';
+    if (r.status === 'aprovada') {
+        authHtml = `
+            <div class="card auth-card aprovada">
+                <h3>Autorização</h3>
+                <div class="meta-grid">
+                    <span class="k">Autorizado por:</span><span class="v">${esc(r.aprovador_nome)}</span>
+                    <span class="k">Data/Hora:</span><span class="v">${fmtDate(r.data_decisao)}</span>
+                </div>
+                <div class="sig">${esc(r.assinatura)}</div>
+                <div class="actions">
+                    <a href="/requisicoes/${r.id}/pdf" target="_blank" class="btn btn-pdf">📄 Baixar PDF de autorização</a>
+                </div>
+            </div>`;
+    } else if (r.status === 'rejeitada') {
+        authHtml = `
+            <div class="card auth-card rejeitada">
+                <h3>Rejeição</h3>
+                <div class="meta-grid">
+                    <span class="k">Rejeitado por:</span><span class="v">${esc(r.aprovador_nome)}</span>
+                    <span class="k">Data/Hora:</span><span class="v">${fmtDate(r.data_decisao)}</span>
+                    <span class="k">Motivo:</span><span class="v">${esc(r.motivo_rejeicao)}</span>
+                </div>
+            </div>`;
+    } else if (r.status === 'pendente' && isMaster) {
+        authHtml = `
+            <div class="card auth-card">
+                <h3>Autorização pendente</h3>
+                <p style="font-size:.85rem;color:var(--gray60);">Assine com seu nome completo para autorizar esta requisição.</p>
+                <input type="text" id="assinatura" class="assin-input" placeholder="Seu nome (assinatura digital)" autocomplete="off">
+                <div class="err" id="errAuth"></div>
+                <div class="actions">
+                    <button class="btn btn-green" onclick="aprovar()">Autorizar</button>
+                    <button class="btn btn-red" onclick="rejeitar()">Rejeitar</button>
+                </div>
+            </div>`;
+    } else if (r.status === 'pendente') {
+        authHtml = `
+            <div class="card auth-card">
+                <h3>Status</h3>
+                <p style="font-size:.9rem;">Aguardando autorização do administrador.</p>
+                <div class="actions">
+                    <button class="btn btn-gray" onclick="cancelar()">Cancelar requisição</button>
+                </div>
+            </div>`;
+    } else {
+        authHtml = `<div class="card auth-card"><h3>Status</h3><p>${PAPEL_PT[r.status] || r.status}</p></div>`;
+    }
+
+    document.getElementById('content').innerHTML = `
+        <div class="det-header">
+            <div>
+                <div class="det-title">${esc(r.numero) || '#' + r.id}</div>
+                <div class="det-sub">Criada em ${fmtDate(r.data_solicitacao)} · <span class="status-badge status-${r.status}">${PAPEL_PT[r.status] || r.status}</span></div>
+            </div>
+        </div>
+        <div class="det-wrap">
+            <div>
+                <div class="card" style="margin-bottom:1rem;">
+                    <h3>Dados da solicitação</h3>
+                    <div class="meta-grid">
+                        <span class="k">Solicitante:</span><span class="v">${esc(r.solicitante_nome)}</span>
+                        <span class="k">Responsável:</span><span class="v">${esc(r.responsavel) || '-'}</span>
+                        <span class="k">Funcionário (retirada):</span><span class="v">${esc(r.funcionario_retirada)}</span>
+                        <span class="k">Fornecedor:</span><span class="v">${esc(r.fornecedor)}</span>
+                        ${r.observacoes ? `<span class="k">Observações:</span><span class="v" style="white-space:pre-wrap;">${esc(r.observacoes)}</span>` : ''}
+                    </div>
+                </div>
+                <div class="card">
+                    <h3>Materiais</h3>
+                    <ul class="itens-list">${itensHtml}</ul>
+                </div>
+            </div>
+            <div>
+                ${authHtml}
+                <div class="card" style="margin-top:1rem;">
+                    <h3>Histórico</h3>
+                    <ul class="hist">${histHtml}</ul>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+async function aprovar() {
+    const assinatura = document.getElementById('assinatura').value.trim();
+    const err = document.getElementById('errAuth');
+    err.style.display = 'none';
+    if (!assinatura) { err.textContent = 'Informe a assinatura.'; err.style.display = 'block'; return; }
+    if (!confirm(`Autorizar esta requisição com a assinatura "${assinatura}"?`)) return;
+    const res = await fetch('/api/requisicoes/' + REQ_ID + '/aprovar', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({assinatura})
+    });
+    const d = await res.json();
+    if (!res.ok) { err.textContent = d.erro || 'Erro.'; err.style.display = 'block'; return; }
+    carregar();
+}
+
+async function rejeitar() {
+    const motivo = prompt('Motivo da rejeição:');
+    if (!motivo) return;
+    const res = await fetch('/api/requisicoes/' + REQ_ID + '/rejeitar', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({motivo})
+    });
+    const d = await res.json();
+    if (!res.ok) { alert(d.erro || 'Erro.'); return; }
+    carregar();
+}
+
+async function cancelar() {
+    if (!confirm('Cancelar esta requisição?')) return;
+    const res = await fetch('/api/requisicoes/' + REQ_ID + '/cancelar', {method: 'POST'});
+    const d = await res.json();
+    if (!res.ok) { alert(d.erro || 'Erro.'); return; }
+    carregar();
+}
+
+carregar();
+</script>
+{% endblock %}

@@ -48,6 +48,19 @@ def init_db():
     db = sqlite3.connect(DATABASE)
     with open(os.path.join(os.path.dirname(__file__), 'schema.sql'), encoding='utf-8') as f:
         db.executescript(f.read())
+
+    # Migração: coluna `papel` em usuarios (bancos legados)
+    cols = [r[1] for r in db.execute("PRAGMA table_info(usuarios)").fetchall()]
+    if 'papel' not in cols:
+        db.execute("ALTER TABLE usuarios ADD COLUMN papel TEXT NOT NULL DEFAULT 'usuario'")
+
+    # Promove ADMIN_EMAIL a master (Dr. Anselmo)
+    admin_email = (os.getenv('ADMIN_EMAIL') or '').strip().lower()
+    if admin_email:
+        db.execute("UPDATE usuarios SET papel='master' WHERE lower(email)=? AND papel<>'master'",
+                   (admin_email,))
+
+    db.commit()
     db.close()
 
 
@@ -69,6 +82,50 @@ def api_login_required(f):
             return jsonify({'erro': 'Não autenticado'}), 401
         return f(*args, **kwargs)
     return decorated
+
+
+def current_user():
+    if 'user_id' not in session:
+        return None
+    return get_db().execute(
+        "SELECT id, nome, email, papel FROM usuarios WHERE id=?",
+        (session['user_id'],)
+    ).fetchone()
+
+
+def is_master(user=None):
+    user = user or current_user()
+    return bool(user and user['papel'] == 'master')
+
+
+def master_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if 'user_id' not in session:
+            return redirect(url_for('login', next=request.url))
+        if not is_master():
+            return "Acesso restrito ao autorizador (master).", 403
+        return f(*args, **kwargs)
+    return decorated
+
+
+def api_master_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if 'user_id' not in session:
+            return jsonify({'erro': 'Não autenticado'}), 401
+        if not is_master():
+            return jsonify({'erro': 'Apenas o autorizador (master) pode executar esta ação.'}), 403
+        return f(*args, **kwargs)
+    return decorated
+
+
+@app.context_processor
+def inject_user_ctx():
+    if 'user_id' not in session:
+        return {'current_user': None, 'is_master': False}
+    user = current_user()
+    return {'current_user': user, 'is_master': is_master(user)}
 
 
 @app.route('/login', methods=['GET', 'POST'])
@@ -1982,6 +2039,458 @@ REGRAS:
         return jsonify({'erro': 'Resposta inválida do Claude', 'resposta_raw': resposta_text}), 500
     except Exception as e:
         return jsonify({'erro': f'Erro inesperado: {str(e)}'}), 500
+
+
+# ── Requisições de Compra ──────────────────────────────────────────
+
+def _req_proximo_numero(db):
+    ano = datetime.now().year
+    row = db.execute(
+        "SELECT COUNT(*) AS n FROM requisicoes_compra WHERE numero LIKE ?",
+        (f'REQ-{ano}-%',)
+    ).fetchone()
+    return f"REQ-{ano}-{(row['n'] + 1):04d}"
+
+
+def _req_log(db, req_id, acao, detalhes=None):
+    user = current_user()
+    db.execute(
+        """INSERT INTO requisicoes_historico
+           (requisicao_id, usuario_id, usuario_nome, acao, detalhes)
+           VALUES (?, ?, ?, ?, ?)""",
+        (req_id,
+         user['id'] if user else None,
+         user['nome'] if user else None,
+         acao, detalhes)
+    )
+
+
+def _req_fetch(db, req_id):
+    req = db.execute(
+        "SELECT * FROM requisicoes_compra WHERE id=?", (req_id,)
+    ).fetchone()
+    if not req:
+        return None, None, None
+    itens = db.execute(
+        "SELECT * FROM requisicoes_itens WHERE requisicao_id=? ORDER BY ordem, id",
+        (req_id,)
+    ).fetchall()
+    hist = db.execute(
+        "SELECT * FROM requisicoes_historico WHERE requisicao_id=? ORDER BY created_at DESC, id DESC",
+        (req_id,)
+    ).fetchall()
+    return req, itens, hist
+
+
+@app.route('/requisicoes')
+@login_required
+def requisicoes_page():
+    return render_template('requisicoes.html')
+
+
+@app.route('/requisicoes/nova')
+@login_required
+def requisicao_nova_page():
+    return render_template('requisicao_nova.html')
+
+
+@app.route('/requisicoes/<int:req_id>')
+@login_required
+def requisicao_detalhe_page(req_id):
+    return render_template('requisicao_detalhe.html', req_id=req_id)
+
+
+@app.route('/api/requisicoes', methods=['GET'])
+@api_login_required
+def api_requisicoes_list():
+    db = get_db()
+    user = current_user()
+    status = request.args.get('status', '').strip()
+    escopo = request.args.get('escopo', '').strip()  # 'meus' | 'todos'
+
+    where = []
+    params = []
+    if status in ('pendente', 'aprovada', 'rejeitada', 'cancelada'):
+        where.append("r.status = ?")
+        params.append(status)
+
+    # Usuário comum só vê suas próprias requisições; master vê tudo (ou 'meus' opcional)
+    if not is_master(user) or escopo == 'meus':
+        where.append("r.solicitante_id = ?")
+        params.append(user['id'])
+
+    sql = """
+        SELECT r.*,
+               (SELECT COUNT(*) FROM requisicoes_itens WHERE requisicao_id=r.id) AS n_itens
+        FROM requisicoes_compra r
+    """
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY CASE r.status WHEN 'pendente' THEN 0 ELSE 1 END, r.id DESC"
+
+    rows = db.execute(sql, params).fetchall()
+    return jsonify({
+        'is_master': is_master(user),
+        'requisicoes': [dict(r) for r in rows],
+    })
+
+
+@app.route('/api/requisicoes', methods=['POST'])
+@api_login_required
+def api_requisicoes_criar():
+    db = get_db()
+    user = current_user()
+    data = request.get_json(silent=True) or {}
+
+    responsavel = (data.get('responsavel') or 'Fazenda Porto do Engenho').strip()
+    funcionario_retirada = (data.get('funcionario_retirada') or '').strip()
+    fornecedor = (data.get('fornecedor') or '').strip()
+    observacoes = (data.get('observacoes') or '').strip()
+    itens_raw = data.get('itens') or []
+
+    itens = []
+    for i, it in enumerate(itens_raw):
+        desc = (it.get('descricao') or '').strip() if isinstance(it, dict) else ''
+        qtd = (it.get('quantidade') or '').strip() if isinstance(it, dict) else ''
+        if desc:
+            itens.append((i + 1, desc, qtd))
+
+    if not funcionario_retirada:
+        return jsonify({'erro': 'Informe o funcionário que fará a retirada.'}), 400
+    if not fornecedor:
+        return jsonify({'erro': 'Informe o fornecedor.'}), 400
+    if not itens:
+        return jsonify({'erro': 'Adicione ao menos um item.'}), 400
+
+    numero = _req_proximo_numero(db)
+    cur = db.execute(
+        """INSERT INTO requisicoes_compra
+           (numero, solicitante_id, solicitante_nome, responsavel,
+            funcionario_retirada, fornecedor, observacoes, status)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'pendente')""",
+        (numero, user['id'], user['nome'], responsavel,
+         funcionario_retirada, fornecedor, observacoes)
+    )
+    req_id = cur.lastrowid
+    for ordem, desc, qtd in itens:
+        db.execute(
+            "INSERT INTO requisicoes_itens (requisicao_id, ordem, descricao, quantidade) VALUES (?, ?, ?, ?)",
+            (req_id, ordem, desc, qtd)
+        )
+    _req_log(db, req_id, 'criada', f'{len(itens)} item(ns)')
+    db.commit()
+    return jsonify({'id': req_id, 'numero': numero}), 201
+
+
+@app.route('/api/requisicoes/<int:req_id>', methods=['GET'])
+@api_login_required
+def api_requisicao_get(req_id):
+    db = get_db()
+    user = current_user()
+    req, itens, hist = _req_fetch(db, req_id)
+    if not req:
+        return jsonify({'erro': 'Requisição não encontrada.'}), 404
+    if not is_master(user) and req['solicitante_id'] != user['id']:
+        return jsonify({'erro': 'Sem permissão.'}), 403
+    return jsonify({
+        'is_master': is_master(user),
+        'requisicao': dict(req),
+        'itens': [dict(r) for r in itens],
+        'historico': [dict(r) for r in hist],
+    })
+
+
+def _aprovar_uma(db, req_id, assinatura):
+    req = db.execute(
+        "SELECT id, status, numero FROM requisicoes_compra WHERE id=?", (req_id,)
+    ).fetchone()
+    if not req:
+        return False, 'não encontrada'
+    if req['status'] != 'pendente':
+        return False, f"não está pendente (status: {req['status']})"
+    user = current_user()
+    db.execute(
+        """UPDATE requisicoes_compra
+           SET status='aprovada', aprovador_id=?, aprovador_nome=?, assinatura=?,
+               data_decisao=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP
+           WHERE id=?""",
+        (user['id'], user['nome'], assinatura, req_id)
+    )
+    _req_log(db, req_id, 'aprovada', f'Assinado por {user["nome"]}')
+    return True, req['numero']
+
+
+@app.route('/api/requisicoes/<int:req_id>/aprovar', methods=['POST'])
+@api_master_required
+def api_requisicao_aprovar(req_id):
+    db = get_db()
+    data = request.get_json(silent=True) or {}
+    assinatura = (data.get('assinatura') or '').strip()
+    if not assinatura:
+        return jsonify({'erro': 'Informe a assinatura.'}), 400
+    ok, info = _aprovar_uma(db, req_id, assinatura)
+    if not ok:
+        return jsonify({'erro': f'Requisição {info}.'}), 400
+    db.commit()
+    return jsonify({'ok': True, 'numero': info})
+
+
+@app.route('/api/requisicoes/aprovar-lote', methods=['POST'])
+@api_master_required
+def api_requisicao_aprovar_lote():
+    db = get_db()
+    data = request.get_json(silent=True) or {}
+    ids = data.get('ids') or []
+    assinatura = (data.get('assinatura') or '').strip()
+    if not ids or not isinstance(ids, list):
+        return jsonify({'erro': 'Selecione ao menos uma requisição.'}), 400
+    if not assinatura:
+        return jsonify({'erro': 'Informe a assinatura.'}), 400
+
+    aprovadas, falhas = [], []
+    for rid in ids:
+        try:
+            rid_int = int(rid)
+        except (TypeError, ValueError):
+            falhas.append({'id': rid, 'motivo': 'id inválido'})
+            continue
+        ok, info = _aprovar_uma(db, rid_int, assinatura)
+        if ok:
+            aprovadas.append({'id': rid_int, 'numero': info})
+        else:
+            falhas.append({'id': rid_int, 'motivo': info})
+    db.commit()
+    return jsonify({'aprovadas': aprovadas, 'falhas': falhas})
+
+
+@app.route('/api/requisicoes/<int:req_id>/rejeitar', methods=['POST'])
+@api_master_required
+def api_requisicao_rejeitar(req_id):
+    db = get_db()
+    data = request.get_json(silent=True) or {}
+    motivo = (data.get('motivo') or '').strip()
+    if not motivo:
+        return jsonify({'erro': 'Informe o motivo da rejeição.'}), 400
+    req = db.execute(
+        "SELECT status FROM requisicoes_compra WHERE id=?", (req_id,)
+    ).fetchone()
+    if not req:
+        return jsonify({'erro': 'Requisição não encontrada.'}), 404
+    if req['status'] != 'pendente':
+        return jsonify({'erro': f'Requisição não está pendente (status: {req["status"]}).'}), 400
+    user = current_user()
+    db.execute(
+        """UPDATE requisicoes_compra
+           SET status='rejeitada', aprovador_id=?, aprovador_nome=?,
+               motivo_rejeicao=?, data_decisao=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP
+           WHERE id=?""",
+        (user['id'], user['nome'], motivo, req_id)
+    )
+    _req_log(db, req_id, 'rejeitada', motivo)
+    db.commit()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/requisicoes/<int:req_id>/cancelar', methods=['POST'])
+@api_login_required
+def api_requisicao_cancelar(req_id):
+    db = get_db()
+    user = current_user()
+    req = db.execute(
+        "SELECT solicitante_id, status FROM requisicoes_compra WHERE id=?", (req_id,)
+    ).fetchone()
+    if not req:
+        return jsonify({'erro': 'Requisição não encontrada.'}), 404
+    if req['solicitante_id'] != user['id'] and not is_master(user):
+        return jsonify({'erro': 'Sem permissão.'}), 403
+    if req['status'] != 'pendente':
+        return jsonify({'erro': 'Só é possível cancelar requisições pendentes.'}), 400
+    db.execute(
+        """UPDATE requisicoes_compra
+           SET status='cancelada', updated_at=CURRENT_TIMESTAMP
+           WHERE id=?""",
+        (req_id,)
+    )
+    _req_log(db, req_id, 'cancelada')
+    db.commit()
+    return jsonify({'ok': True})
+
+
+@app.route('/requisicoes/<int:req_id>/pdf')
+@login_required
+def requisicao_pdf(req_id):
+    db = get_db()
+    user = current_user()
+    req, itens, _ = _req_fetch(db, req_id)
+    if not req:
+        return "Requisição não encontrada.", 404
+    if not is_master(user) and req['solicitante_id'] != user['id']:
+        return "Sem permissão.", 403
+    if req['status'] != 'aprovada':
+        return "A autorização em PDF só é emitida após aprovação.", 400
+
+    pdf_bytes = _gerar_pdf_requisicao(req, itens)
+    _req_log(db, req_id, 'pdf_gerado')
+    db.commit()
+    return Response(
+        pdf_bytes,
+        mimetype='application/pdf',
+        headers={
+            'Content-Disposition': f'inline; filename=autorizacao_{req["numero"]}.pdf'
+        }
+    )
+
+
+def _fmt_dt(s):
+    if not s:
+        return ''
+    try:
+        if isinstance(s, str):
+            dt = datetime.fromisoformat(s.replace('Z', '').split('.')[0])
+        else:
+            dt = s
+        return dt.strftime('%d/%m/%Y %H:%M')
+    except Exception:
+        return str(s)
+
+
+def _gerar_pdf_requisicao(req, itens):
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import cm
+    from reportlab.lib import colors
+    from reportlab.pdfgen import canvas
+    from reportlab.platypus import Table, TableStyle
+
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=A4)
+    w, h = A4
+    margin = 2 * cm
+    red = colors.HexColor('#D01B20')
+    black = colors.HexColor('#1A1A1A')
+    gray = colors.HexColor('#666666')
+
+    # Cabeçalho com logo
+    logo_path = os.path.join(os.path.dirname(__file__), 'static', 'logo.jpg')
+    try:
+        if os.path.exists(logo_path):
+            c.drawImage(logo_path, margin, h - margin - 2.2*cm, width=3.2*cm, height=2.2*cm,
+                        preserveAspectRatio=True, mask='auto')
+    except Exception:
+        pass
+
+    c.setFillColor(black)
+    c.setFont('Helvetica-Bold', 14)
+    c.drawString(margin + 3.8*cm, h - margin - 0.8*cm, 'FAZENDA PORTO DO ENGENHO')
+    c.setFont('Helvetica-Bold', 12)
+    c.drawString(margin + 3.8*cm, h - margin - 1.4*cm, 'AUTORIZAÇÃO DE COMPRA')
+    c.setFont('Helvetica', 9)
+    c.setFillColor(gray)
+    c.drawString(margin + 3.8*cm, h - margin - 2.0*cm, f'Nº {req["numero"]}')
+
+    # Linha vermelha
+    c.setStrokeColor(red)
+    c.setLineWidth(2)
+    y = h - margin - 2.6*cm
+    c.line(margin, y, w - margin, y)
+
+    # Metadados
+    y -= 0.8*cm
+    c.setFillColor(black)
+    c.setFont('Helvetica-Bold', 10)
+    c.drawString(margin, y, 'Data da solicitação:')
+    c.setFont('Helvetica', 10)
+    c.drawString(margin + 4.0*cm, y, _fmt_dt(req['data_solicitacao']))
+
+    y -= 0.55*cm
+    c.setFont('Helvetica-Bold', 10); c.drawString(margin, y, 'Responsável pela solicitação:')
+    c.setFont('Helvetica', 10);       c.drawString(margin + 5.6*cm, y, req['responsavel'] or '')
+
+    y -= 0.55*cm
+    c.setFont('Helvetica-Bold', 10); c.drawString(margin, y, 'Funcionário que fará a retirada:')
+    c.setFont('Helvetica', 10);       c.drawString(margin + 5.9*cm, y, req['funcionario_retirada'] or '')
+
+    y -= 0.55*cm
+    c.setFont('Helvetica-Bold', 10); c.drawString(margin, y, 'Fornecedor:')
+    c.setFont('Helvetica', 10);       c.drawString(margin + 2.4*cm, y, req['fornecedor'] or '')
+
+    y -= 0.55*cm
+    c.setFont('Helvetica-Bold', 10); c.drawString(margin, y, 'Solicitante (login):')
+    c.setFont('Helvetica', 10);       c.drawString(margin + 3.6*cm, y, req['solicitante_nome'] or '')
+
+    # Itens
+    y -= 0.9*cm
+    c.setFont('Helvetica-Bold', 11); c.drawString(margin, y, 'Materiais autorizados:')
+    y -= 0.4*cm
+
+    data = [['#', 'Quantidade', 'Descrição']]
+    for it in itens:
+        data.append([str(it['ordem']), it['quantidade'] or '', it['descricao'] or ''])
+    tbl = Table(data, colWidths=[1.0*cm, 3.2*cm, w - 2*margin - 4.2*cm])
+    tbl.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), red),
+        ('TEXTCOLOR',  (0, 0), (-1, 0), colors.white),
+        ('FONTNAME',   (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE',   (0, 0), (-1, -1), 9),
+        ('VALIGN',     (0, 0), (-1, -1), 'TOP'),
+        ('GRID',       (0, 0), (-1, -1), 0.3, colors.HexColor('#CCCCCC')),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F7F7F7')]),
+        ('LEFTPADDING', (0, 0), (-1, -1), 6),
+        ('RIGHTPADDING',(0, 0), (-1, -1), 6),
+        ('TOPPADDING',  (0, 0), (-1, -1), 5),
+        ('BOTTOMPADDING',(0, 0), (-1, -1), 5),
+    ]))
+    tw, th = tbl.wrap(w - 2*margin, y)
+    tbl.drawOn(c, margin, y - th)
+    y = y - th - 0.5*cm
+
+    # Observações
+    if req['observacoes']:
+        c.setFont('Helvetica-Bold', 10); c.drawString(margin, y, 'Observações:')
+        y -= 0.4*cm
+        c.setFont('Helvetica', 9)
+        for linha in req['observacoes'].splitlines() or [req['observacoes']]:
+            c.drawString(margin, y, linha[:110])
+            y -= 0.4*cm
+
+    # Bloco de autorização
+    y -= 0.4*cm
+    c.setStrokeColor(red); c.setLineWidth(1.2)
+    box_h = 3.8*cm
+    c.rect(margin, y - box_h, w - 2*margin, box_h, stroke=1, fill=0)
+    c.setFillColor(red)
+    c.setFont('Helvetica-Bold', 11)
+    c.drawString(margin + 0.4*cm, y - 0.6*cm, 'AUTORIZAÇÃO')
+    c.setFillColor(black)
+    c.setFont('Helvetica', 10)
+    c.drawString(margin + 0.4*cm, y - 1.2*cm,
+                 'Autorizo a retirada dos materiais acima listados junto ao fornecedor indicado.')
+    c.setFont('Helvetica-Bold', 10)
+    c.drawString(margin + 0.4*cm, y - 2.0*cm, 'Autorizado por:')
+    c.setFont('Helvetica', 10)
+    c.drawString(margin + 3.5*cm, y - 2.0*cm, req['aprovador_nome'] or '')
+    c.setFont('Helvetica-Bold', 10)
+    c.drawString(margin + 0.4*cm, y - 2.6*cm, 'Data/Hora:')
+    c.setFont('Helvetica', 10)
+    c.drawString(margin + 2.4*cm, y - 2.6*cm, _fmt_dt(req['data_decisao']))
+    c.setFont('Helvetica-Bold', 10)
+    c.drawString(margin + 0.4*cm, y - 3.2*cm, 'Assinatura digital:')
+    c.setFont('Helvetica-Oblique', 11)
+    c.setFillColor(red)
+    c.drawString(margin + 3.7*cm, y - 3.2*cm, req['assinatura'] or '')
+    c.setFillColor(black)
+
+    # Rodapé
+    c.setFont('Helvetica', 7); c.setFillColor(gray)
+    c.drawString(margin, margin - 0.6*cm,
+                 f'Documento gerado eletronicamente · Nº {req["numero"]} · '
+                 f'{datetime.now().strftime("%d/%m/%Y %H:%M")}')
+    c.drawRightString(w - margin, margin - 0.6*cm,
+                      '(27) 3225-8853 · fazendaportodoengenho@gmail.com')
+
+    c.showPage()
+    c.save()
+    buf.seek(0)
+    return buf.read()
 
 
 # ── Init & Run ─────────────────────────────────────────────────────

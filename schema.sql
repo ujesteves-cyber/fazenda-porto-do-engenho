@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS usuarios (
     email         TEXT NOT NULL UNIQUE,
     senha_hash    TEXT NOT NULL,
     ativo         INTEGER DEFAULT 1,
+    papel         TEXT NOT NULL DEFAULT 'usuario',
     created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -150,6 +151,47 @@ CREATE TABLE IF NOT EXISTS estoque_touros (
     UNIQUE(brinco, grupo_id)
 );
 
+-- Requisições de compra (fluxo solicitação → autorização do master)
+CREATE TABLE IF NOT EXISTS requisicoes_compra (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    numero               TEXT UNIQUE,
+    data_solicitacao     DATETIME DEFAULT CURRENT_TIMESTAMP,
+    solicitante_id       INTEGER NOT NULL REFERENCES usuarios(id),
+    solicitante_nome     TEXT NOT NULL,
+    responsavel          TEXT,
+    funcionario_retirada TEXT NOT NULL,
+    fornecedor           TEXT NOT NULL,
+    observacoes          TEXT,
+    status               TEXT NOT NULL DEFAULT 'pendente',
+    aprovador_id         INTEGER REFERENCES usuarios(id),
+    aprovador_nome       TEXT,
+    assinatura           TEXT,
+    data_decisao         DATETIME,
+    motivo_rejeicao      TEXT,
+    created_at           DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at           DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Itens de cada requisição (1..N)
+CREATE TABLE IF NOT EXISTS requisicoes_itens (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    requisicao_id  INTEGER NOT NULL REFERENCES requisicoes_compra(id) ON DELETE CASCADE,
+    ordem          INTEGER NOT NULL,
+    descricao      TEXT NOT NULL,
+    quantidade     TEXT
+);
+
+-- Histórico de ações (trilha de auditoria)
+CREATE TABLE IF NOT EXISTS requisicoes_historico (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    requisicao_id  INTEGER NOT NULL REFERENCES requisicoes_compra(id) ON DELETE CASCADE,
+    usuario_id     INTEGER REFERENCES usuarios(id),
+    usuario_nome   TEXT,
+    acao           TEXT NOT NULL,
+    detalhes       TEXT,
+    created_at     DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Índices para performance
 CREATE INDEX IF NOT EXISTS idx_prod_mae   ON produtos(mae_id);
 CREATE INDEX IF NOT EXISTS idx_aval_ani   ON avaliacoes(animal_id);
@@ -157,3 +199,8 @@ CREATE INDEX IF NOT EXISTS idx_aval_rod   ON avaliacoes(rodada_id);
 CREATE INDEX IF NOT EXISTS idx_mat_id     ON matrizes(animal_id);
 CREATE INDEX IF NOT EXISTS idx_mat_ceip   ON matrizes(ceip);
 CREATE INDEX IF NOT EXISTS idx_mat_categ  ON matrizes(categoria);
+CREATE INDEX IF NOT EXISTS idx_req_status ON requisicoes_compra(status);
+CREATE INDEX IF NOT EXISTS idx_req_solic  ON requisicoes_compra(solicitante_id);
+CREATE INDEX IF NOT EXISTS idx_req_aprov  ON requisicoes_compra(aprovador_id);
+CREATE INDEX IF NOT EXISTS idx_req_itens  ON requisicoes_itens(requisicao_id);
+CREATE INDEX IF NOT EXISTS idx_req_hist   ON requisicoes_historico(requisicao_id);
