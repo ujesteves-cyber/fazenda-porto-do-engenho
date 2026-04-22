@@ -33,6 +33,22 @@
     .batch-bar .count { font-size:.85rem; opacity:.8; }
 
     .empty { padding:3rem; text-align:center; color:var(--gray40); font-size:.9rem; }
+
+    .btn-expand { background:none; border:1px solid var(--gray20); color:var(--gray60); border-radius:3px; padding:.12rem .5rem; font-size:.78rem; cursor:pointer; font-weight:600; font-variant-numeric:tabular-nums; }
+    .btn-expand:hover { background:var(--red); color:#fff; border-color:var(--red); }
+    .btn-expand.open { background:#1A1A1A; color:#fff; border-color:#1A1A1A; }
+    .btn-expand .chev { display:inline-block; margin-left:.3rem; transition:transform .15s; font-size:.7rem; }
+    .btn-expand.open .chev { transform:rotate(180deg); }
+
+    tr.expansion td { background:#FAFAFA; padding:.8rem 1.2rem .9rem; border-bottom:2px solid #EEE; }
+    tr.expansion .title { font-size:.72rem; text-transform:uppercase; color:var(--gray60); letter-spacing:.04em; margin-bottom:.4rem; font-weight:600; }
+    tr.expansion ul { list-style:none; padding:0; margin:0; font-size:.86rem; }
+    tr.expansion li { padding:.32rem 0; border-bottom:1px solid #EEE; display:flex; gap:.8rem; }
+    tr.expansion li:last-child { border-bottom:none; }
+    tr.expansion .ord { color:var(--gray40); width:24px; }
+    tr.expansion .qtd { color:var(--red); font-weight:600; min-width:85px; }
+    tr.expansion .obs { margin-top:.6rem; font-size:.82rem; color:var(--gray60); background:#fff; border-left:3px solid var(--gray20); padding:.5rem .7rem; border-radius:0 3px 3px 0; }
+    tr.expansion .err { color:var(--red); font-size:.85rem; }
 </style>
 
 <div class="req-head">
@@ -82,6 +98,8 @@ let IS_MASTER = false;
 let STATUS = '';
 let ESCOPO = '';
 const selecionadas = new Set();
+const itensCache = new Map(); // req_id -> {itens, observacoes}
+const expandidas = new Set();
 
 function fmtDate(s) {
     if (!s) return '-';
@@ -89,6 +107,7 @@ function fmtDate(s) {
     if (isNaN(d)) return s;
     return d.toLocaleDateString('pt-BR') + ' ' + d.toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'});
 }
+function esc(v) { return v == null ? '' : String(v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
 async function carregar() {
     const params = new URLSearchParams();
@@ -106,23 +125,29 @@ async function carregar() {
         atualizarBatchBar();
         return;
     }
-    tb.innerHTML = data.requisicoes.map(r => {
+    const rows = [];
+    for (const r of data.requisicoes) {
         const check = IS_MASTER && r.status === 'pendente'
             ? `<input type="checkbox" class="sel" data-id="${r.id}" ${selecionadas.has(r.id) ? 'checked' : ''}>`
             : '';
-        return `
-        <tr>
+        const open = expandidas.has(r.id);
+        rows.push(`
+        <tr data-row="${r.id}">
             <td style="${IS_MASTER ? '' : 'display:none'}">${check}</td>
-            <td><a href="/requisicoes/${r.id}">${r.numero || '#' + r.id}</a></td>
+            <td><a href="/requisicoes/${r.id}">${esc(r.numero) || '#' + r.id}</a></td>
             <td>${fmtDate(r.data_solicitacao)}</td>
-            <td>${r.solicitante_nome || '-'}</td>
-            <td>${r.fornecedor || '-'}</td>
-            <td>${r.funcionario_retirada || '-'}</td>
-            <td>${r.n_itens}</td>
+            <td>${esc(r.solicitante_nome) || '-'}</td>
+            <td>${esc(r.fornecedor) || '-'}</td>
+            <td>${esc(r.funcionario_retirada) || '-'}</td>
+            <td><button class="btn-expand ${open ? 'open' : ''}" data-toggle="${r.id}" title="Ver itens">${r.n_itens}<span class="chev">▾</span></button></td>
             <td><span class="status-badge status-${r.status}">${r.status}</span></td>
             <td><a href="/requisicoes/${r.id}">Ver →</a></td>
-        </tr>`;
-    }).join('');
+        </tr>
+        <tr class="expansion" data-exp="${r.id}" style="display:${open ? '' : 'none'};">
+            <td colspan="9"><div class="title">Carregando itens...</div></td>
+        </tr>`);
+    }
+    tb.innerHTML = rows.join('');
 
     tb.querySelectorAll('.sel').forEach(cb => {
         cb.addEventListener('change', e => {
@@ -131,7 +156,49 @@ async function carregar() {
             atualizarBatchBar();
         });
     });
+    tb.querySelectorAll('.btn-expand').forEach(b => {
+        b.addEventListener('click', () => toggleExpand(Number(b.dataset.toggle), b));
+    });
+    // Repopula expansões que estavam abertas
+    for (const id of expandidas) {
+        const row = tb.querySelector(`tr[data-exp="${id}"]`);
+        if (row && itensCache.has(id)) renderExpansion(row, itensCache.get(id));
+    }
     atualizarBatchBar();
+}
+
+async function toggleExpand(id, btn) {
+    const row = document.querySelector(`tr[data-exp="${id}"]`);
+    if (!row) return;
+    if (expandidas.has(id)) {
+        expandidas.delete(id);
+        row.style.display = 'none';
+        btn.classList.remove('open');
+        return;
+    }
+    expandidas.add(id);
+    row.style.display = '';
+    btn.classList.add('open');
+    if (!itensCache.has(id)) {
+        row.querySelector('td').innerHTML = '<div class="title">Carregando itens...</div>';
+        const d = await API.get('/api/requisicoes/' + id);
+        if (!d || d.erro) {
+            row.querySelector('td').innerHTML = `<div class="err">${esc(d && d.erro || 'Erro ao carregar.')}</div>`;
+            return;
+        }
+        itensCache.set(id, {itens: d.itens, observacoes: d.requisicao.observacoes});
+    }
+    renderExpansion(row, itensCache.get(id));
+}
+
+function renderExpansion(row, data) {
+    const itens = data.itens || [];
+    const obs = data.observacoes || '';
+    const lista = itens.length
+        ? `<ul>${itens.map(it => `<li><span class='ord'>${it.ordem}.</span><span class='qtd'>${esc(it.quantidade) || '-'}</span><span>${esc(it.descricao)}</span></li>`).join('')}</ul>`
+        : '<div style="color:#999;font-size:.85rem;">Sem itens.</div>';
+    const obsHtml = obs ? `<div class='obs'><b>Obs.:</b> ${esc(obs)}</div>` : '';
+    row.querySelector('td').innerHTML = `<div class="title">Itens da requisição</div>${lista}${obsHtml}`;
 }
 
 function atualizarBatchBar() {
