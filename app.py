@@ -5,6 +5,66 @@ import csv
 import io
 from datetime import datetime
 from functools import wraps
+from zoneinfo import ZoneInfo
+
+TZ = ZoneInfo('America/Sao_Paulo')
+
+
+def now_local():
+    """Datetime atual em America/Sao_Paulo, sem tzinfo (para armazenar em SQLite)."""
+    return datetime.now(TZ).replace(tzinfo=None)
+
+
+def now_local_str():
+    return now_local().strftime('%Y-%m-%d %H:%M:%S')
+
+
+def _catalog_normalize(nome):
+    if not nome:
+        return ''
+    return ' '.join(nome.strip().upper().split())
+
+
+def _catalog_find_or_create(db, descricao, unidade=None):
+    """Localiza item no catálogo (case-insensitive); cria se novo. Retorna id ou None."""
+    nome = _catalog_normalize(descricao)
+    if not nome:
+        return None
+    row = db.execute("SELECT id FROM itens_catalogo WHERE nome = ? COLLATE NOCASE",
+                     (nome,)).fetchone()
+    if row:
+        return row['id'] if isinstance(row, sqlite3.Row) else row[0]
+    cur = db.execute(
+        "INSERT INTO itens_catalogo (nome, unidade) VALUES (?, ?)",
+        (nome, (unidade or '').strip() or None)
+    )
+    return cur.lastrowid
+
+
+def _catalog_touch(db, cat_id, when=None):
+    """Incrementa contador e atualiza último uso do item."""
+    when = when or now_local_str()
+    db.execute(
+        "UPDATE itens_catalogo SET n_pedidos = n_pedidos + 1, ultimo_uso = ? WHERE id = ?",
+        (when, cat_id)
+    )
+
+
+def _catalog_recalc(db):
+    """Recalcula n_pedidos e ultimo_uso a partir de requisicoes_itens."""
+    db.execute("""
+        UPDATE itens_catalogo
+        SET n_pedidos = COALESCE((
+                SELECT COUNT(*) FROM requisicoes_itens
+                WHERE item_catalogo_id = itens_catalogo.id
+            ), 0),
+            ultimo_uso = (
+                SELECT MAX(r.data_solicitacao)
+                FROM requisicoes_itens ri
+                JOIN requisicoes_compra r ON r.id = ri.requisicao_id
+                WHERE ri.item_catalogo_id = itens_catalogo.id
+            )
+    """)
 
 import bcrypt
 import xlrd
@@ -53,6 +113,25 @@ def init_db():
     cols = [r[1] for r in db.execute("PRAGMA table_info(usuarios)").fetchall()]
     if 'papel' not in cols:
         db.execute("ALTER TABLE usuarios ADD COLUMN papel TEXT NOT NULL DEFAULT 'usuario'")
+
+    # Migração: coluna `item_catalogo_id` em requisicoes_itens
+    cols = [r[1] for r in db.execute("PRAGMA table_info(requisicoes_itens)").fetchall()]
+    if 'item_catalogo_id' not in cols:
+        db.execute("ALTER TABLE requisicoes_itens ADD COLUMN item_catalogo_id INTEGER REFERENCES itens_catalogo(id)")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_req_itens_cat ON requisicoes_itens(item_catalogo_id)")
+
+    # Backfill: linka itens existentes ao catálogo e recalcula estatísticas
+    db.row_factory = sqlite3.Row
+    orfaos = db.execute("""
+        SELECT id, descricao, quantidade FROM requisicoes_itens
+        WHERE item_catalogo_id IS NULL AND descricao IS NOT NULL AND TRIM(descricao) <> ''
+    """).fetchall()
+    for it in orfaos:
+        cat_id = _catalog_find_or_create(db, it['descricao'], it['quantidade'])
+        if cat_id:
+            db.execute("UPDATE requisicoes_itens SET item_catalogo_id=? WHERE id=?", (cat_id, it['id']))
+    if orfaos:
+        _catalog_recalc(db)
 
     # Promove ADMIN_EMAIL a master (Dr. Anselmo)
     admin_email = (os.getenv('ADMIN_EMAIL') or '').strip().lower()
@@ -2056,12 +2135,12 @@ def _req_log(db, req_id, acao, detalhes=None):
     user = current_user()
     db.execute(
         """INSERT INTO requisicoes_historico
-           (requisicao_id, usuario_id, usuario_nome, acao, detalhes)
-           VALUES (?, ?, ?, ?, ?)""",
+           (requisicao_id, usuario_id, usuario_nome, acao, detalhes, created_at)
+           VALUES (?, ?, ?, ?, ?, ?)""",
         (req_id,
          user['id'] if user else None,
          user['nome'] if user else None,
-         acao, detalhes)
+         acao, detalhes, now_local_str())
     )
 
 
@@ -2163,19 +2242,23 @@ def api_requisicoes_criar():
         return jsonify({'erro': 'Adicione ao menos um item.'}), 400
 
     numero = _req_proximo_numero(db)
+    ts = now_local_str()
     cur = db.execute(
         """INSERT INTO requisicoes_compra
-           (numero, solicitante_id, solicitante_nome, responsavel,
-            funcionario_retirada, fornecedor, observacoes, status)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 'pendente')""",
-        (numero, user['id'], user['nome'], responsavel,
-         funcionario_retirada, fornecedor, observacoes)
+           (numero, data_solicitacao, solicitante_id, solicitante_nome, responsavel,
+            funcionario_retirada, fornecedor, observacoes, status, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pendente', ?, ?)""",
+        (numero, ts, user['id'], user['nome'], responsavel,
+         funcionario_retirada, fornecedor, observacoes, ts, ts)
     )
     req_id = cur.lastrowid
     for ordem, desc, qtd in itens:
+        cat_id = _catalog_find_or_create(db, desc, qtd)
+        if cat_id:
+            _catalog_touch(db, cat_id, ts)
         db.execute(
-            "INSERT INTO requisicoes_itens (requisicao_id, ordem, descricao, quantidade) VALUES (?, ?, ?, ?)",
-            (req_id, ordem, desc, qtd)
+            "INSERT INTO requisicoes_itens (requisicao_id, ordem, descricao, quantidade, item_catalogo_id) VALUES (?, ?, ?, ?, ?)",
+            (req_id, ordem, desc, qtd, cat_id)
         )
     _req_log(db, req_id, 'criada', f'{len(itens)} item(ns)')
     db.commit()
@@ -2209,12 +2292,13 @@ def _aprovar_uma(db, req_id, assinatura):
     if req['status'] != 'pendente':
         return False, f"não está pendente (status: {req['status']})"
     user = current_user()
+    ts = now_local_str()
     db.execute(
         """UPDATE requisicoes_compra
            SET status='aprovada', aprovador_id=?, aprovador_nome=?, assinatura=?,
-               data_decisao=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP
+               data_decisao=?, updated_at=?
            WHERE id=?""",
-        (user['id'], user['nome'], assinatura, req_id)
+        (user['id'], user['nome'], assinatura, ts, ts, req_id)
     )
     _req_log(db, req_id, 'aprovada', f'Assinado por {user["nome"]}')
     return True, req['numero']
@@ -2279,12 +2363,13 @@ def api_requisicao_rejeitar(req_id):
     if req['status'] != 'pendente':
         return jsonify({'erro': f'Requisição não está pendente (status: {req["status"]}).'}), 400
     user = current_user()
+    ts = now_local_str()
     db.execute(
         """UPDATE requisicoes_compra
            SET status='rejeitada', aprovador_id=?, aprovador_nome=?,
-               motivo_rejeicao=?, data_decisao=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP
+               motivo_rejeicao=?, data_decisao=?, updated_at=?
            WHERE id=?""",
-        (user['id'], user['nome'], motivo, req_id)
+        (user['id'], user['nome'], motivo, ts, ts, req_id)
     )
     _req_log(db, req_id, 'rejeitada', motivo)
     db.commit()
@@ -2307,9 +2392,9 @@ def api_requisicao_cancelar(req_id):
         return jsonify({'erro': 'Só é possível cancelar requisições pendentes.'}), 400
     db.execute(
         """UPDATE requisicoes_compra
-           SET status='cancelada', updated_at=CURRENT_TIMESTAMP
+           SET status='cancelada', updated_at=?
            WHERE id=?""",
-        (req_id,)
+        (now_local_str(), req_id)
     )
     _req_log(db, req_id, 'cancelada')
     db.commit()
@@ -2483,7 +2568,7 @@ def _gerar_pdf_requisicao(req, itens):
     c.setFont('Helvetica', 7); c.setFillColor(gray)
     c.drawString(margin, margin - 0.6*cm,
                  f'Documento gerado eletronicamente · Nº {req["numero"]} · '
-                 f'{datetime.now().strftime("%d/%m/%Y %H:%M")}')
+                 f'{now_local().strftime("%d/%m/%Y %H:%M")}')
     c.drawRightString(w - margin, margin - 0.6*cm,
                       '(27) 3225-8853 · fazendaportodoengenho@gmail.com')
 
@@ -2491,6 +2576,134 @@ def _gerar_pdf_requisicao(req, itens):
     c.save()
     buf.seek(0)
     return buf.read()
+
+
+# ── Catálogo de itens ──────────────────────────────────────────────
+
+@app.route('/api/itens-catalogo')
+@api_login_required
+def api_itens_catalogo():
+    db = get_db()
+    q = (request.args.get('q') or '').strip()
+    if q:
+        rows = db.execute("""
+            SELECT id, nome, unidade, categoria, n_pedidos, ultimo_uso
+            FROM itens_catalogo
+            WHERE ativo = 1 AND nome LIKE ? COLLATE NOCASE
+            ORDER BY n_pedidos DESC, nome
+            LIMIT 50
+        """, (f'%{q}%',)).fetchall()
+    else:
+        rows = db.execute("""
+            SELECT id, nome, unidade, categoria, n_pedidos, ultimo_uso
+            FROM itens_catalogo
+            WHERE ativo = 1
+            ORDER BY n_pedidos DESC, nome
+            LIMIT 500
+        """).fetchall()
+    return jsonify({'itens': [dict(r) for r in rows]})
+
+
+# ── Relatório de autorizações ──────────────────────────────────────
+
+@app.route('/requisicoes/relatorio')
+@login_required
+def requisicoes_relatorio_page():
+    return render_template('requisicoes_relatorio.html')
+
+
+def _relatorio_query(db, user, args):
+    data_ini = (args.get('data_ini') or '').strip()
+    data_fim = (args.get('data_fim') or '').strip()
+    item_id  = args.get('item_id')
+    fornecedor = (args.get('fornecedor') or '').strip()
+
+    where = ["r.status = 'aprovada'"]
+    params = []
+    if not is_master(user):
+        where.append("r.solicitante_id = ?")
+        params.append(user['id'])
+    if data_ini:
+        where.append("DATE(r.data_decisao) >= DATE(?)")
+        params.append(data_ini)
+    if data_fim:
+        where.append("DATE(r.data_decisao) <= DATE(?)")
+        params.append(data_fim)
+    if item_id and str(item_id).isdigit():
+        where.append("ri.item_catalogo_id = ?")
+        params.append(int(item_id))
+    if fornecedor:
+        where.append("r.fornecedor LIKE ? COLLATE NOCASE")
+        params.append(f'%{fornecedor}%')
+    where_sql = " AND ".join(where)
+
+    linhas = db.execute(f"""
+        SELECT r.id AS req_id, r.numero, r.data_decisao, r.data_solicitacao,
+               r.solicitante_nome, r.funcionario_retirada, r.fornecedor,
+               r.aprovador_nome, r.assinatura,
+               ri.ordem, ri.descricao, ri.quantidade, ri.item_catalogo_id,
+               ic.nome AS item_nome
+        FROM requisicoes_compra r
+        JOIN requisicoes_itens ri ON ri.requisicao_id = r.id
+        LEFT JOIN itens_catalogo ic ON ic.id = ri.item_catalogo_id
+        WHERE {where_sql}
+        ORDER BY r.data_decisao DESC, r.id DESC, ri.ordem
+    """, params).fetchall()
+
+    resumo = db.execute(f"""
+        SELECT ri.item_catalogo_id AS item_id,
+               COALESCE(ic.nome, ri.descricao) AS item_nome,
+               ic.unidade,
+               COUNT(*) AS n_pedidos,
+               MAX(r.data_decisao) AS ultima_autorizacao,
+               COUNT(DISTINCT r.fornecedor) AS n_fornecedores,
+               GROUP_CONCAT(DISTINCT r.fornecedor) AS fornecedores
+        FROM requisicoes_compra r
+        JOIN requisicoes_itens ri ON ri.requisicao_id = r.id
+        LEFT JOIN itens_catalogo ic ON ic.id = ri.item_catalogo_id
+        WHERE {where_sql}
+        GROUP BY ri.item_catalogo_id, COALESCE(ic.nome, ri.descricao), ic.unidade
+        ORDER BY n_pedidos DESC, item_nome
+    """, params).fetchall()
+
+    return {
+        'filtros': {
+            'data_ini': data_ini, 'data_fim': data_fim,
+            'item_id': item_id, 'fornecedor': fornecedor,
+        },
+        'total_autorizacoes': len({r['req_id'] for r in linhas}),
+        'total_itens': len(linhas),
+        'linhas': [dict(r) for r in linhas],
+        'resumo': [dict(r) for r in resumo],
+    }
+
+
+@app.route('/api/requisicoes/relatorio')
+@api_login_required
+def api_requisicoes_relatorio():
+    data = _relatorio_query(get_db(), current_user(), request.args)
+    data['is_master'] = is_master(current_user())
+    return jsonify(data)
+
+
+@app.route('/api/requisicoes/relatorio.csv')
+@api_login_required
+def api_requisicoes_relatorio_csv():
+    data = _relatorio_query(get_db(), current_user(), request.args)
+    output = io.StringIO()
+    w = csv.writer(output, delimiter=';')
+    w.writerow(['Data Autorização', 'Nº', 'Solicitante', 'Fornecedor',
+                'Funcionário', 'Item', 'Quantidade', 'Autorizado por'])
+    for r in data['linhas']:
+        w.writerow([r['data_decisao'], r['numero'], r['solicitante_nome'], r['fornecedor'],
+                    r['funcionario_retirada'], r['item_nome'] or r['descricao'],
+                    r['quantidade'] or '', r['aprovador_nome']])
+    output.seek(0)
+    return Response(
+        output.getvalue(),
+        mimetype='text/csv; charset=utf-8',
+        headers={'Content-Disposition': 'attachment; filename=autorizacoes.csv'}
+    )
 
 
 # ── Init & Run ─────────────────────────────────────────────────────
