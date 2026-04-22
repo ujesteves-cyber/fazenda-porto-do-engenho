@@ -9,8 +9,9 @@ email = os.getenv('ADMIN_EMAIL', 'admin@portodoengenho.com.br')
 senha = os.getenv('ADMIN_PASSWORD', 'admin123').encode()
 hash_ = bcrypt.hashpw(senha, bcrypt.gensalt()).decode()
 
-db_path = os.path.join(os.path.dirname(__file__), 'data', 'fazenda167.db')
-os.makedirs(os.path.dirname(db_path), exist_ok=True)
+data_dir = os.getenv('DATA_DIR') or os.path.join(os.path.dirname(__file__), 'data')
+os.makedirs(data_dir, exist_ok=True)
+db_path = os.path.join(data_dir, 'fazenda167.db')
 
 conn = sqlite3.connect(db_path)
 
