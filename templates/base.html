@@ -33,6 +33,7 @@
             <a href="/requisicoes"><span class="icon">✎</span> <span>Requisições de Compra{% if is_master %} <em style="color:#E6A817;font-style:normal;font-size:10px;">·master</em>{% endif %}</span></a>
             <a href="/requisicoes/relatorio"><span class="icon">◔</span> <span>Relatório de Compras</span></a>
             <a href="/importar"><span class="icon">↑</span> <span>Importar Rodada</span></a>
+            {% if is_master %}<a href="/admin/usuarios" title="Gerenciar acessos ao sistema"><span class="icon">☰</span> <span>Usuários</span></a>{% endif %}
             {% if is_master %}<a href="/admin/backup" title="Baixa um snapshot completo do banco (.db)"><span class="icon">⇩</span> <span>Backup do banco</span></a>{% endif %}
         </nav>
         <div class="sidebar-footer">

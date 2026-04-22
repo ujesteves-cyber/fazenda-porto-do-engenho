@@ -1,0 +1,171 @@
+{% extends "base.html" %}
+{% block title %}Usuários{% endblock %}
+{% block page_title %}Gerenciamento de Usuários{% endblock %}
+
+{% block content %}
+<style>
+    .adm-wrap { display:grid; grid-template-columns:1fr 340px; gap:1.2rem; }
+    @media (max-width:900px) { .adm-wrap { grid-template-columns:1fr; } }
+
+    .card { background:#fff; border:1px solid var(--gray10); border-radius:6px; padding:1.2rem 1.3rem; }
+    .card h3 { font-size:.85rem; text-transform:uppercase; letter-spacing:.05em; color:var(--gray60); margin-bottom:.9rem; font-weight:600; }
+
+    table.users { width:100%; border-collapse:collapse; font-size:.88rem; }
+    table.users th { background:#F7F7F7; text-align:left; padding:.55rem .7rem; font-size:.7rem; text-transform:uppercase; color:var(--gray60); letter-spacing:.04em; border-bottom:1px solid var(--gray10); }
+    table.users td { padding:.55rem .7rem; border-bottom:1px solid var(--gray5); vertical-align:middle; }
+    table.users tr.inativo td { opacity:.55; }
+    table.users tr.me td { background:#FFFCF4; }
+
+    .badge-papel { display:inline-block; padding:.15rem .5rem; border-radius:3px; font-size:.68rem; font-weight:700; text-transform:uppercase; letter-spacing:.04em; }
+    .badge-papel.master  { background:#FFF4D6; color:#8A6A00; }
+    .badge-papel.usuario { background:#E8E8E8; color:#666; }
+
+    .status-dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:.35rem; vertical-align:middle; }
+    .status-dot.on  { background:#1A7A3F; }
+    .status-dot.off { background:#999; }
+
+    .actions-cell { display:flex; gap:.3rem; flex-wrap:wrap; }
+    .btn-mini { border:1px solid var(--gray20); background:#fff; color:var(--gray60); padding:.2rem .55rem; border-radius:3px; font-size:.72rem; cursor:pointer; font-weight:600; }
+    .btn-mini:hover { background:var(--gray5); }
+    .btn-mini.danger:hover { background:var(--red); color:#fff; border-color:var(--red); }
+
+    .form-field { margin-bottom:.75rem; }
+    .form-field label { display:block; font-size:.7rem; text-transform:uppercase; letter-spacing:.04em; color:var(--gray60); margin-bottom:.25rem; font-weight:600; }
+    .form-field input, .form-field select { width:100%; padding:.55rem .7rem; border:1px solid var(--gray20); border-radius:4px; font-size:.9rem; background:#fff; }
+    .form-field input:focus, .form-field select:focus { outline:none; border-color:var(--red); }
+    .form-hint { font-size:.72rem; color:var(--gray60); margin-top:.2rem; }
+
+    .btn { border:none; padding:.6rem 1.2rem; border-radius:4px; font-weight:600; font-size:.88rem; cursor:pointer; }
+    .btn-primary { background:var(--red); color:#fff; }
+    .btn-primary:hover { background:var(--red-dk); }
+    .btn-primary:disabled { opacity:.5; cursor:wait; }
+    .alert { padding:.55rem .7rem; border-radius:4px; font-size:.85rem; margin-bottom:.7rem; display:none; }
+    .alert.err { background:#FBD7D9; color:#A8151A; }
+    .alert.ok  { background:#D6F4DE; color:#1A7A3F; }
+</style>
+
+<div class="adm-wrap">
+    <div>
+        <div class="card">
+            <h3>Usuários cadastrados</h3>
+            <table class="users">
+                <thead><tr>
+                    <th>Nome</th><th>E-mail</th><th>Papel</th><th>Status</th><th></th>
+                </tr></thead>
+                <tbody id="tbody"><tr><td colspan="5" style="padding:1.5rem;text-align:center;color:var(--gray40);">Carregando...</td></tr></tbody>
+            </table>
+        </div>
+    </div>
+
+    <div>
+        <div class="card">
+            <h3>Novo usuário</h3>
+            <div class="alert err" id="err"></div>
+            <div class="alert ok" id="ok"></div>
+            <form id="frm" onsubmit="return criar(event)">
+                <div class="form-field">
+                    <label>Nome *</label>
+                    <input type="text" id="nome" required placeholder="Ex: Laysa">
+                </div>
+                <div class="form-field">
+                    <label>E-mail *</label>
+                    <input type="email" id="email" required placeholder="exemplo@portodoengenho.com.br">
+                </div>
+                <div class="form-field">
+                    <label>Senha *</label>
+                    <input type="text" id="senha" required minlength="6" placeholder="Mínimo 6 caracteres">
+                    <div class="form-hint">Ao criar, repasse a senha ao usuário — ele poderá logar em seguida.</div>
+                </div>
+                <div class="form-field">
+                    <label>Papel</label>
+                    <select id="papel">
+                        <option value="usuario">Usuário comum</option>
+                        <option value="master">Master (autoriza compras)</option>
+                    </select>
+                </div>
+                <button type="submit" class="btn btn-primary" id="btnEnv" style="width:100%;">Criar usuário</button>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let ME = null;
+function esc(v) { return v == null ? '' : String(v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function showAlert(id, msg) { const el = document.getElementById(id); el.textContent = msg; el.style.display='block'; setTimeout(()=>el.style.display='none', 4000); }
+
+async function carregar() {
+    const d = await API.get('/api/usuarios');
+    if (!d) return;
+    ME = d.me;
+    const tb = document.getElementById('tbody');
+    if (!d.usuarios.length) { tb.innerHTML = '<tr><td colspan="5">Nenhum usuário.</td></tr>'; return; }
+    tb.innerHTML = d.usuarios.map(u => {
+        const isMe = u.id === ME;
+        const cls = `${u.ativo ? '' : 'inativo'} ${isMe ? 'me' : ''}`.trim();
+        return `<tr class="${cls}">
+            <td><b>${esc(u.nome)}</b>${isMe ? ' <span style="color:#999;font-size:.72rem;">(você)</span>' : ''}</td>
+            <td>${esc(u.email)}</td>
+            <td><span class="badge-papel ${u.papel}">${u.papel}</span></td>
+            <td><span class="status-dot ${u.ativo ? 'on' : 'off'}"></span>${u.ativo ? 'Ativo' : 'Inativo'}</td>
+            <td class="actions-cell">
+                <button class="btn-mini" onclick="resetSenha(${u.id}, '${esc(u.nome).replace(/'/g,"\\\'")}')">Senha</button>
+                ${u.papel === 'master'
+                    ? (isMe ? '' : `<button class="btn-mini" onclick="setPapel(${u.id},'usuario')">Rebaixar</button>`)
+                    : `<button class="btn-mini" onclick="setPapel(${u.id},'master')">Promover</button>`}
+                ${isMe ? '' : `<button class="btn-mini danger" onclick="toggleAtivo(${u.id})">${u.ativo ? 'Desativar' : 'Reativar'}</button>`}
+            </td>
+        </tr>`;
+    }).join('');
+}
+
+async function criar(e) {
+    e.preventDefault();
+    const btn = document.getElementById('btnEnv');
+    btn.disabled = true; btn.textContent = 'Criando...';
+    const payload = {
+        nome:  document.getElementById('nome').value,
+        email: document.getElementById('email').value,
+        senha: document.getElementById('senha').value,
+        papel: document.getElementById('papel').value,
+    };
+    const res = await fetch('/api/usuarios', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+    const d = await res.json();
+    btn.disabled = false; btn.textContent = 'Criar usuário';
+    if (!res.ok) { showAlert('err', d.erro || 'Erro ao criar.'); return false; }
+    showAlert('ok', `Usuário ${payload.nome} criado. A senha já pode ser usada.`);
+    document.getElementById('frm').reset();
+    carregar();
+    return false;
+}
+
+async function toggleAtivo(id) {
+    const r = await fetch(`/api/usuarios/${id}/ativo`, {method:'POST'});
+    const d = await r.json();
+    if (!r.ok) { alert(d.erro || 'Erro.'); return; }
+    carregar();
+}
+
+async function resetSenha(id, nome) {
+    const senha = prompt(`Nova senha para ${nome}:`);
+    if (!senha) return;
+    if (senha.length < 6) { alert('Senha deve ter ao menos 6 caracteres.'); return; }
+    const r = await fetch(`/api/usuarios/${id}/senha`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({senha})});
+    const d = await r.json();
+    if (!r.ok) { alert(d.erro || 'Erro.'); return; }
+    showAlert('ok', `Senha de ${nome} redefinida.`);
+}
+
+async function setPapel(id, papel) {
+    if (!confirm(`Alterar papel para "${papel}"?`)) return;
+    const r = await fetch(`/api/usuarios/${id}/papel`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({papel})});
+    const d = await r.json();
+    if (!r.ok) { alert(d.erro || 'Erro.'); return; }
+    carregar();
+}
+
+carregar();
+</script>
+{% endblock %}
