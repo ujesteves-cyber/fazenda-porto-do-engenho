@@ -135,11 +135,22 @@ def init_db():
     if orfaos:
         _catalog_recalc(db)
 
-    # Promove ADMIN_EMAIL a master (Dr. Anselmo)
+    # Bootstrap do usuário master (Dr. Anselmo) a partir das variáveis de ambiente
     admin_email = (os.getenv('ADMIN_EMAIL') or '').strip().lower()
+    admin_pass  = os.getenv('ADMIN_PASSWORD')
     if admin_email:
-        db.execute("UPDATE usuarios SET papel='master' WHERE lower(email)=? AND papel<>'master'",
-                   (admin_email,))
+        existing = db.execute(
+            "SELECT id FROM usuarios WHERE lower(email)=?", (admin_email,)
+        ).fetchone()
+        if existing:
+            db.execute("UPDATE usuarios SET papel='master' WHERE lower(email)=? AND papel<>'master'",
+                       (admin_email,))
+        elif admin_pass:
+            senha_hash = bcrypt.hashpw(admin_pass.encode(), bcrypt.gensalt()).decode()
+            db.execute(
+                "INSERT INTO usuarios (nome, email, senha_hash, papel) VALUES (?, ?, ?, 'master')",
+                ('Dr. Anselmo', admin_email, senha_hash)
+            )
 
     db.commit()
     db.close()
