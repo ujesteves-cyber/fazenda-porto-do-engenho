@@ -115,6 +115,7 @@ function render(d) {
                 <div class="sig">${esc(r.assinatura)}</div>
                 <div class="actions">
                     <a href="/requisicoes/${r.id}/pdf" target="_blank" class="btn btn-pdf">📄 Baixar PDF de autorização</a>
+                    <button class="btn btn-red" onclick="cancelarAprovada()" title="Cancelar uma requisição já autorizada — exige motivo">Cancelar autorização</button>
                 </div>
             </div>`;
     } else if (r.status === 'rejeitada') {
@@ -138,6 +139,10 @@ function render(d) {
                     <button class="btn btn-green" onclick="aprovar()">Autorizar</button>
                     <button class="btn btn-red" onclick="rejeitar()">Rejeitar</button>
                 </div>
+                <div class="actions" style="margin-top:.5rem;border-top:1px solid #F5BEC0;padding-top:.7rem;">
+                    <a href="/requisicoes/${r.id}/editar" class="btn btn-gray">✎ Editar</a>
+                    <button class="btn btn-gray" onclick="cancelar()">Cancelar</button>
+                </div>
             </div>`;
     } else if (r.status === 'pendente') {
         authHtml = `
@@ -145,6 +150,7 @@ function render(d) {
                 <h3>Status</h3>
                 <p style="font-size:.9rem;">Aguardando autorização do administrador.</p>
                 <div class="actions">
+                    <a href="/requisicoes/${r.id}/editar" class="btn btn-gray">✎ Editar</a>
                     <button class="btn btn-gray" onclick="cancelar()">Cancelar requisição</button>
                 </div>
             </div>`;
@@ -216,7 +222,22 @@ async function rejeitar() {
 
 async function cancelar() {
     if (!confirm('Cancelar esta requisição?')) return;
-    const res = await fetch('/api/requisicoes/' + REQ_ID + '/cancelar', {method: 'POST'});
+    const res = await fetch('/api/requisicoes/' + REQ_ID + '/cancelar', {
+        method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({})
+    });
+    const d = await res.json();
+    if (!res.ok) { alert(d.erro || 'Erro.'); return; }
+    carregar();
+}
+
+async function cancelarAprovada() {
+    const motivo = prompt('Esta requisição já foi autorizada. Informe o motivo do cancelamento:');
+    if (!motivo || !motivo.trim()) return;
+    const res = await fetch('/api/requisicoes/' + REQ_ID + '/cancelar', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({motivo: motivo.trim()})
+    });
     const d = await res.json();
     if (!res.ok) { alert(d.erro || 'Erro.'); return; }
     carregar();

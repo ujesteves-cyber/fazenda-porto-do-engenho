@@ -2296,6 +2296,71 @@ def api_requisicao_get(req_id):
     })
 
 
+@app.route('/api/requisicoes/<int:req_id>', methods=['PUT'])
+@api_login_required
+def api_requisicao_editar(req_id):
+    """Edita requisição — permitido apenas quando pendente."""
+    db = get_db()
+    user = current_user()
+    req = db.execute(
+        "SELECT solicitante_id, status FROM requisicoes_compra WHERE id=?", (req_id,)
+    ).fetchone()
+    if not req:
+        return jsonify({'erro': 'Requisição não encontrada.'}), 404
+    if req['solicitante_id'] != user['id'] and not is_master(user):
+        return jsonify({'erro': 'Sem permissão.'}), 403
+    if req['status'] != 'pendente':
+        return jsonify({'erro': 'Só é possível editar requisições pendentes.'}), 400
+
+    data = request.get_json(silent=True) or {}
+    responsavel = (data.get('responsavel') or 'Fazenda Porto do Engenho').strip()
+    funcionario_retirada = (data.get('funcionario_retirada') or '').strip()
+    fornecedor = (data.get('fornecedor') or '').strip()
+    observacoes = (data.get('observacoes') or '').strip()
+    itens_raw = data.get('itens') or []
+
+    itens = []
+    for i, it in enumerate(itens_raw):
+        desc = (it.get('descricao') or '').strip() if isinstance(it, dict) else ''
+        qtd = (it.get('quantidade') or '').strip() if isinstance(it, dict) else ''
+        if desc:
+            itens.append((i + 1, desc, qtd))
+
+    if not funcionario_retirada:
+        return jsonify({'erro': 'Informe o funcionário que fará a retirada.'}), 400
+    if not fornecedor:
+        return jsonify({'erro': 'Informe o fornecedor.'}), 400
+    if not itens:
+        return jsonify({'erro': 'Adicione ao menos um item.'}), 400
+
+    ts = now_local_str()
+    db.execute("""
+        UPDATE requisicoes_compra
+        SET responsavel=?, funcionario_retirada=?, fornecedor=?, observacoes=?, updated_at=?
+        WHERE id=?
+    """, (responsavel, funcionario_retirada, fornecedor, observacoes, ts, req_id))
+
+    # Substitui itens (edição completa)
+    db.execute("DELETE FROM requisicoes_itens WHERE requisicao_id=?", (req_id,))
+    for ordem, desc, qtd in itens:
+        cat_id = _catalog_find_or_create(db, desc, qtd)
+        db.execute(
+            "INSERT INTO requisicoes_itens (requisicao_id, ordem, descricao, quantidade, item_catalogo_id) VALUES (?, ?, ?, ?, ?)",
+            (req_id, ordem, desc, qtd, cat_id)
+        )
+    # Recalcula contadores do catálogo (edição não deve inflar n_pedidos)
+    _catalog_recalc(db)
+    _req_log(db, req_id, 'editada', f'{len(itens)} item(ns)')
+    db.commit()
+    return jsonify({'ok': True})
+
+
+@app.route('/requisicoes/<int:req_id>/editar')
+@login_required
+def requisicao_editar_page(req_id):
+    return render_template('requisicao_editar.html', req_id=req_id)
+
+
 def _aprovar_uma(db, req_id, assinatura):
     req = db.execute(
         "SELECT id, status, numero FROM requisicoes_compra WHERE id=?", (req_id,)
@@ -2394,6 +2459,9 @@ def api_requisicao_rejeitar(req_id):
 def api_requisicao_cancelar(req_id):
     db = get_db()
     user = current_user()
+    data = request.get_json(silent=True) or {}
+    motivo = (data.get('motivo') or '').strip()
+
     req = db.execute(
         "SELECT solicitante_id, status FROM requisicoes_compra WHERE id=?", (req_id,)
     ).fetchone()
@@ -2401,15 +2469,21 @@ def api_requisicao_cancelar(req_id):
         return jsonify({'erro': 'Requisição não encontrada.'}), 404
     if req['solicitante_id'] != user['id'] and not is_master(user):
         return jsonify({'erro': 'Sem permissão.'}), 403
-    if req['status'] != 'pendente':
-        return jsonify({'erro': 'Só é possível cancelar requisições pendentes.'}), 400
+    if req['status'] in ('cancelada', 'rejeitada'):
+        return jsonify({'erro': f'Requisição já está {req["status"]}.'}), 400
+    if req['status'] == 'aprovada' and not motivo:
+        return jsonify({'erro': 'Para cancelar uma requisição já autorizada, informe o motivo.'}), 400
+
     db.execute(
         """UPDATE requisicoes_compra
            SET status='cancelada', updated_at=?
            WHERE id=?""",
         (now_local_str(), req_id)
     )
-    _req_log(db, req_id, 'cancelada')
+    detalhes = motivo or None
+    if req['status'] == 'aprovada' and motivo:
+        detalhes = f'Cancelada após autorização. Motivo: {motivo}'
+    _req_log(db, req_id, 'cancelada', detalhes)
     db.commit()
     return jsonify({'ok': True})
 
