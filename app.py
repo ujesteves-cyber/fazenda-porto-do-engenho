@@ -71,8 +71,9 @@ import xlrd
 import anthropic
 from flask import (
     Flask, render_template, request, redirect, url_for,
-    session, flash, jsonify, g, send_file, Response
+    session, flash, jsonify, g, send_file, Response, after_this_request
 )
+import tempfile
 from dotenv import load_dotenv
 
 load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env'), override=True)
@@ -80,9 +81,10 @@ load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env'), ov
 app = Flask(__name__)
 app.secret_key = os.getenv('SECRET_KEY', 'dev-secret-key-change-me')
 
-DATABASE = os.path.join(os.path.dirname(__file__), 'data', 'fazenda167.db')
-UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), 'uploads')
-os.makedirs(os.path.dirname(DATABASE), exist_ok=True)
+DATA_DIR = os.getenv('DATA_DIR') or os.path.join(os.path.dirname(__file__), 'data')
+DATABASE = os.path.join(DATA_DIR, 'fazenda167.db')
+UPLOAD_FOLDER = os.getenv('UPLOAD_FOLDER') or os.path.join(os.path.dirname(__file__), 'uploads')
+os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 
@@ -2703,6 +2705,41 @@ def api_requisicoes_relatorio_csv():
         output.getvalue(),
         mimetype='text/csv; charset=utf-8',
         headers={'Content-Disposition': 'attachment; filename=autorizacoes.csv'}
+    )
+
+
+# ── Backup do banco (somente master) ───────────────────────────────
+
+@app.route('/admin/backup')
+@master_required
+def admin_backup():
+    """Baixa um snapshot consistente do SQLite (online backup API)."""
+    fd, tmp_path = tempfile.mkstemp(suffix='.db', prefix='fazenda_bkp_')
+    os.close(fd)
+
+    @after_this_request
+    def _cleanup(response):
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        return response
+
+    try:
+        src = get_db()
+        dst = sqlite3.connect(tmp_path)
+        with dst:
+            src.backup(dst)
+        dst.close()
+    except Exception as e:
+        return f'Erro ao gerar backup: {e}', 500
+
+    stamp = now_local().strftime('%Y%m%d_%H%M%S')
+    return send_file(
+        tmp_path,
+        as_attachment=True,
+        download_name=f'fazenda_backup_{stamp}.db',
+        mimetype='application/octet-stream',
     )
 
 
