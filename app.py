@@ -2754,6 +2754,106 @@ def admin_backup():
     )
 
 
+# ── Admin: gerenciamento de usuários (master only) ─────────────────
+
+@app.route('/admin/usuarios')
+@master_required
+def admin_usuarios_page():
+    return render_template('admin_usuarios.html')
+
+
+@app.route('/api/usuarios', methods=['GET'])
+@api_master_required
+def api_usuarios_list():
+    db = get_db()
+    rows = db.execute(
+        "SELECT id, nome, email, papel, ativo, created_at FROM usuarios ORDER BY id"
+    ).fetchall()
+    return jsonify({
+        'usuarios': [dict(r) for r in rows],
+        'me': session.get('user_id'),
+    })
+
+
+@app.route('/api/usuarios', methods=['POST'])
+@api_master_required
+def api_usuarios_criar():
+    db = get_db()
+    data = request.get_json(silent=True) or {}
+    nome  = (data.get('nome') or '').strip()
+    email = (data.get('email') or '').strip().lower()
+    senha = data.get('senha') or ''
+    papel = (data.get('papel') or 'usuario').strip()
+
+    if not nome:
+        return jsonify({'erro': 'Informe o nome.'}), 400
+    if not email:
+        return jsonify({'erro': 'Informe o e-mail.'}), 400
+    if len(senha) < 6:
+        return jsonify({'erro': 'Senha deve ter ao menos 6 caracteres.'}), 400
+    if papel not in ('usuario', 'master'):
+        papel = 'usuario'
+
+    if db.execute("SELECT 1 FROM usuarios WHERE lower(email)=?", (email,)).fetchone():
+        return jsonify({'erro': 'Já existe um usuário com esse e-mail.'}), 400
+
+    senha_hash = bcrypt.hashpw(senha.encode(), bcrypt.gensalt()).decode()
+    cur = db.execute(
+        "INSERT INTO usuarios (nome, email, senha_hash, papel, ativo) VALUES (?, ?, ?, ?, 1)",
+        (nome, email, senha_hash, papel)
+    )
+    db.commit()
+    return jsonify({'id': cur.lastrowid, 'ok': True}), 201
+
+
+@app.route('/api/usuarios/<int:uid>/ativo', methods=['POST'])
+@api_master_required
+def api_usuarios_toggle_ativo(uid):
+    db = get_db()
+    if uid == session.get('user_id'):
+        return jsonify({'erro': 'Você não pode desativar sua própria conta.'}), 400
+    u = db.execute("SELECT ativo FROM usuarios WHERE id=?", (uid,)).fetchone()
+    if not u:
+        return jsonify({'erro': 'Usuário não encontrado.'}), 404
+    novo = 0 if u['ativo'] else 1
+    db.execute("UPDATE usuarios SET ativo=? WHERE id=?", (novo, uid))
+    db.commit()
+    return jsonify({'ativo': novo})
+
+
+@app.route('/api/usuarios/<int:uid>/senha', methods=['POST'])
+@api_master_required
+def api_usuarios_reset_senha(uid):
+    db = get_db()
+    data = request.get_json(silent=True) or {}
+    senha = data.get('senha') or ''
+    if len(senha) < 6:
+        return jsonify({'erro': 'Senha deve ter ao menos 6 caracteres.'}), 400
+    if not db.execute("SELECT 1 FROM usuarios WHERE id=?", (uid,)).fetchone():
+        return jsonify({'erro': 'Usuário não encontrado.'}), 404
+    senha_hash = bcrypt.hashpw(senha.encode(), bcrypt.gensalt()).decode()
+    db.execute("UPDATE usuarios SET senha_hash=? WHERE id=?", (senha_hash, uid))
+    db.commit()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/usuarios/<int:uid>/papel', methods=['POST'])
+@api_master_required
+def api_usuarios_mudar_papel(uid):
+    db = get_db()
+    data = request.get_json(silent=True) or {}
+    papel = (data.get('papel') or '').strip()
+    if papel not in ('usuario', 'master'):
+        return jsonify({'erro': 'Papel inválido.'}), 400
+    if uid == session.get('user_id') and papel != 'master':
+        return jsonify({'erro': 'Você não pode remover seu próprio papel de master.'}), 400
+    if not db.execute("SELECT 1 FROM usuarios WHERE id=?", (uid,)).fetchone():
+        return jsonify({'erro': 'Usuário não encontrado.'}), 404
+    db.execute("UPDATE usuarios SET papel=? WHERE id=?", (papel, uid))
+    db.commit()
+    return jsonify({'ok': True, 'papel': papel})
+
+
 # ── Init & Run ─────────────────────────────────────────────────────
 
 with app.app_context():
