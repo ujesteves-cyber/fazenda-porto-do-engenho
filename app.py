@@ -2665,6 +2665,228 @@ def _gerar_pdf_requisicao(req, itens):
     return buf.read()
 
 
+# ── PDF: lista de pendentes para assinatura física ─────────────────
+
+@app.route('/requisicoes/pendentes.pdf')
+@login_required
+def requisicoes_pendentes_pdf():
+    """Gera um PDF com todas as requisições pendentes — para assinar em papel."""
+    db = get_db()
+    user = current_user()
+
+    where = ["r.status = 'pendente'"]
+    params = []
+    if not is_master(user):
+        where.append("r.solicitante_id = ?")
+        params.append(user['id'])
+    where_sql = " AND ".join(where)
+
+    reqs = db.execute(f"""
+        SELECT r.id, r.numero, r.data_solicitacao, r.solicitante_nome,
+               r.responsavel, r.funcionario_retirada, r.fornecedor, r.observacoes
+        FROM requisicoes_compra r
+        WHERE {where_sql}
+        ORDER BY r.id ASC
+    """, params).fetchall()
+
+    itens_por_req = {}
+    for req in reqs:
+        rows = db.execute(
+            "SELECT ordem, descricao, quantidade FROM requisicoes_itens WHERE requisicao_id=? ORDER BY ordem",
+            (req['id'],)
+        ).fetchall()
+        itens_por_req[req['id']] = rows
+
+    pdf_bytes = _gerar_pdf_pendentes(reqs, itens_por_req, master=is_master(user))
+    stamp = now_local().strftime('%Y%m%d_%H%M')
+    return Response(
+        pdf_bytes,
+        mimetype='application/pdf',
+        headers={
+            'Content-Disposition': f'inline; filename=requisicoes_pendentes_{stamp}.pdf'
+        }
+    )
+
+
+def _gerar_pdf_pendentes(reqs, itens_por_req, master=False):
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import cm
+    from reportlab.lib import colors
+    from reportlab.platypus import (
+        SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
+        Image, PageBreak, KeepTogether
+    )
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.enums import TA_LEFT, TA_CENTER
+
+    buf = io.BytesIO()
+    margin = 1.7 * cm
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4,
+        leftMargin=margin, rightMargin=margin,
+        topMargin=margin, bottomMargin=1.5*cm,
+        title='Requisições Pendentes'
+    )
+    W = A4[0] - 2 * margin
+
+    red   = colors.HexColor('#D01B20')
+    black = colors.HexColor('#1A1A1A')
+    gray  = colors.HexColor('#666666')
+    lgray = colors.HexColor('#CCCCCC')
+
+    s = getSampleStyleSheet()
+    st_title     = ParagraphStyle('t',  parent=s['Title'],   fontName='Helvetica-Bold', fontSize=14, textColor=black, leading=16, spaceAfter=2)
+    st_subtitle  = ParagraphStyle('st', parent=s['Normal'],  fontName='Helvetica-Bold', fontSize=11, textColor=red,   leading=13, spaceAfter=0)
+    st_meta      = ParagraphStyle('m',  parent=s['Normal'],  fontSize=8,  textColor=gray, leading=10)
+    st_req_num   = ParagraphStyle('rn', parent=s['Normal'],  fontName='Helvetica-Bold', fontSize=12, textColor=black, leading=14)
+    st_req_sub   = ParagraphStyle('rs', parent=s['Normal'],  fontSize=8.5, textColor=gray, leading=10, spaceAfter=4)
+    st_field     = ParagraphStyle('f',  parent=s['Normal'],  fontSize=9, leading=11, textColor=black)
+    st_obs       = ParagraphStyle('o',  parent=s['Normal'],  fontSize=8.5, leading=11, textColor=gray, leftIndent=0)
+    st_footer    = ParagraphStyle('fo', parent=s['Normal'],  fontSize=7,   textColor=gray, alignment=TA_CENTER)
+
+    story = []
+
+    # ── Cabeçalho ──
+    logo_path = os.path.join(os.path.dirname(__file__), 'static', 'logo.jpg')
+    header_items = []
+    if os.path.exists(logo_path):
+        header_items.append([Image(logo_path, width=2.6*cm, height=1.8*cm),
+                             [Paragraph('FAZENDA PORTO DO ENGENHO', st_title),
+                              Paragraph('Requisições pendentes de autorização', st_subtitle),
+                              Paragraph(f'Emitido em {now_local().strftime("%d/%m/%Y %H:%M")} · '
+                                        f'{len(reqs)} requisição(ões) aguardando', st_meta)]])
+        t = Table(header_items, colWidths=[3.2*cm, W - 3.2*cm])
+        t.setStyle(TableStyle([
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('LEFTPADDING', (0, 0), (-1, -1), 0),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+        ]))
+        story.append(t)
+    else:
+        story.append(Paragraph('FAZENDA PORTO DO ENGENHO', st_title))
+        story.append(Paragraph('Requisições pendentes de autorização', st_subtitle))
+        story.append(Paragraph(f'Emitido em {now_local().strftime("%d/%m/%Y %H:%M")}', st_meta))
+
+    story.append(Spacer(1, 0.2*cm))
+    linha = Table([['']], colWidths=[W])
+    linha.setStyle(TableStyle([('LINEBELOW', (0,0), (-1,-1), 1.5, red)]))
+    story.append(linha)
+    story.append(Spacer(1, 0.4*cm))
+
+    # ── Sem pendentes ──
+    if not reqs:
+        story.append(Spacer(1, 2*cm))
+        story.append(Paragraph(
+            '<para align="center"><font size="11" color="#666">Não há requisições pendentes de autorização no momento.</font></para>',
+            s['Normal']
+        ))
+        doc.build(story)
+        buf.seek(0)
+        return buf.read()
+
+    # ── Cada requisição em bloco (KeepTogether pra não quebrar meio) ──
+    for idx, req in enumerate(reqs):
+        block = []
+        header_row = Table(
+            [[Paragraph(f"<b>{req['numero']}</b>", st_req_num),
+              Paragraph(f"Solicitada em {_fmt_dt(req['data_solicitacao'])} por <b>{req['solicitante_nome'] or ''}</b>", st_req_sub)]],
+            colWidths=[4.0*cm, W - 4.0*cm]
+        )
+        header_row.setStyle(TableStyle([
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#F4F4F4')),
+            ('BOX', (0, 0), (-1, -1), 0.5, lgray),
+            ('LEFTPADDING', (0, 0), (-1, -1), 8),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 8),
+            ('TOPPADDING', (0, 0), (-1, -1), 6),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+        ]))
+        block.append(header_row)
+
+        fields = [
+            [Paragraph('<b>Responsável:</b>', st_field),
+             Paragraph(req['responsavel'] or '-', st_field),
+             Paragraph('<b>Fornecedor:</b>', st_field),
+             Paragraph(req['fornecedor'] or '-', st_field)],
+            [Paragraph('<b>Retirada:</b>', st_field),
+             Paragraph(req['funcionario_retirada'] or '-', st_field),
+             Paragraph('', st_field),
+             Paragraph('', st_field)],
+        ]
+        fields_t = Table(fields, colWidths=[2.6*cm, (W-2*2.6*cm)/2, 2.6*cm, (W-2*2.6*cm)/2])
+        fields_t.setStyle(TableStyle([
+            ('LINEBELOW', (0, 0), (-1, -1), 0.25, lgray),
+            ('BOX', (0, 0), (-1, -1), 0.5, lgray),
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('LEFTPADDING', (0, 0), (-1, -1), 8),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 8),
+            ('TOPPADDING', (0, 0), (-1, -1), 4),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ]))
+        block.append(fields_t)
+
+        # Tabela de itens
+        itens = itens_por_req.get(req['id'], [])
+        itens_data = [['#', 'Qtd', 'Descrição do item']]
+        for it in itens:
+            itens_data.append([str(it['ordem']), it['quantidade'] or '', it['descricao'] or ''])
+        if not itens:
+            itens_data.append(['-', '-', '(sem itens)'])
+        itens_t = Table(itens_data, colWidths=[0.8*cm, 2.2*cm, W - 0.8*cm - 2.2*cm])
+        itens_t.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), red),
+            ('TEXTCOLOR',  (0, 0), (-1, 0), colors.white),
+            ('FONTNAME',   (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE',   (0, 0), (-1, -1), 8.5),
+            ('VALIGN',     (0, 0), (-1, -1), 'TOP'),
+            ('GRID',       (0, 0), (-1, -1), 0.25, lgray),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#FAFAFA')]),
+            ('LEFTPADDING', (0, 0), (-1, -1), 5),
+            ('RIGHTPADDING',(0, 0), (-1, -1), 5),
+            ('TOPPADDING',  (0, 0), (-1, -1), 3),
+            ('BOTTOMPADDING',(0, 0), (-1, -1), 3),
+        ]))
+        block.append(itens_t)
+
+        if req['observacoes']:
+            block.append(Spacer(1, 0.12*cm))
+            block.append(Paragraph(f"<b>Obs.:</b> {req['observacoes']}", st_obs))
+
+        # Área de decisão/assinatura
+        block.append(Spacer(1, 0.15*cm))
+        decisao = Table(
+            [[Paragraph('<font size="10"><b>(&nbsp;&nbsp;&nbsp;)</b> APROVAR</font>', st_field),
+              Paragraph('<font size="10"><b>(&nbsp;&nbsp;&nbsp;)</b> REJEITAR</font>', st_field),
+              Paragraph('<font size="9">Assinatura: ____________________________________</font>', st_field)]],
+            colWidths=[2.6*cm, 2.6*cm, W - 5.2*cm]
+        )
+        decisao.setStyle(TableStyle([
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#FFFCF2')),
+            ('BOX', (0, 0), (-1, -1), 0.5, colors.HexColor('#E6A817')),
+            ('LEFTPADDING', (0, 0), (-1, -1), 8),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 8),
+            ('TOPPADDING', (0, 0), (-1, -1), 10),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 10),
+        ]))
+        block.append(decisao)
+        block.append(Spacer(1, 0.5*cm))
+
+        story.append(KeepTogether(block))
+
+    # ── Rodapé simples ──
+    story.append(Spacer(1, 0.4*cm))
+    story.append(Paragraph(
+        f'Documento gerado eletronicamente · Fazenda Porto do Engenho · '
+        f'{now_local().strftime("%d/%m/%Y %H:%M")}',
+        st_footer
+    ))
+
+    doc.build(story)
+    buf.seek(0)
+    return buf.read()
+
+
 # ── Catálogo de itens ──────────────────────────────────────────────
 
 @app.route('/api/itens-catalogo')
