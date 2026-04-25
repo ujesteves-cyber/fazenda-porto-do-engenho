@@ -8,8 +8,11 @@
     .req-filtros { display:flex; gap:.5rem; flex-wrap:wrap; align-items:center; }
     .req-filtros select, .req-filtros button { padding:.5rem .8rem; border:1px solid var(--gray20); background:#fff; border-radius:4px; font-size:.85rem; cursor:pointer; }
     .req-filtros button.active { background:var(--red); color:#fff; border-color:var(--red); }
+    .req-head-actions { display:flex; gap:.5rem; flex-wrap:wrap; align-items:center; }
     .req-nova-btn { background:var(--red); color:#fff; border:none; padding:.6rem 1.2rem; border-radius:4px; text-decoration:none; font-weight:600; font-size:.9rem; }
     .req-nova-btn:hover { background:var(--red-dk); }
+    .req-pdf-btn { background:#111; color:#fff; border:none; padding:.6rem 1rem; border-radius:4px; text-decoration:none; font-weight:600; font-size:.85rem; }
+    .req-pdf-btn:hover { background:#000; }
 
     .req-table-wrap { background:#fff; border:1px solid var(--gray10); border-radius:6px; overflow:hidden; }
     .req-table { width:100%; border-collapse:collapse; font-size:.88rem; }
@@ -57,7 +60,8 @@
         .req-filtros { justify-content:flex-start; gap:.3rem; overflow-x:auto; padding-bottom:.3rem; }
         .req-filtros button { flex-shrink:0; font-size:.78rem; padding:.4rem .6rem; }
         #escopoLbl { margin-left:.5rem !important; }
-        .req-nova-btn { text-align:center; display:block; }
+        .req-nova-btn, .req-pdf-btn { text-align:center; display:block; flex:1; }
+        .req-head-actions { width:100%; }
         .req-table { min-width:680px; }
         .batch-bar { flex-direction:column; align-items:stretch; }
         .batch-bar input[type=text] { min-width:0; width:100%; }
@@ -77,7 +81,10 @@
             <input type="checkbox" id="escopoMeus"> Apenas minhas
         </label>
     </div>
-    <a href="/requisicoes/nova" class="req-nova-btn">+ Nova Requisição</a>
+    <div class="req-head-actions">
+        <a href="/requisicoes/pendentes.pdf" target="_blank" class="req-pdf-btn" id="pdfPendentesBtn" style="display:none;" title="Baixar PDF com todas as pendentes para assinatura em papel">📄 Imprimir pendentes</a>
+        <a href="/requisicoes/nova" class="req-nova-btn">+ Nova Requisição</a>
+    </div>
 </div>
 
 <div class="batch-bar" id="batchBar">
@@ -133,6 +140,10 @@ async function carregar() {
     IS_MASTER = data.is_master;
     document.getElementById('colSel').style.display = IS_MASTER ? '' : 'none';
     document.getElementById('escopoLbl').style.display = IS_MASTER ? '' : 'none';
+
+    // Mostra botão "Imprimir pendentes" se houver ao menos uma pendente listada
+    const temPendente = data.requisicoes.some(r => r.status === 'pendente');
+    document.getElementById('pdfPendentesBtn').style.display = temPendente ? '' : 'none';
 
     const tb = document.getElementById('tbody');
     if (!data.requisicoes.length) {
