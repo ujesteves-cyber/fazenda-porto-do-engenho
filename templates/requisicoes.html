@@ -30,7 +30,8 @@
 
     .batch-bar { display:none; background:#111; color:#fff; padding:.8rem 1rem; border-radius:6px; margin-bottom:.8rem; align-items:center; gap:.8rem; flex-wrap:wrap; }
     .batch-bar.active { display:flex; }
-    .batch-bar input[type=text] { flex:1; min-width:220px; padding:.55rem .7rem; border:1px solid #333; background:#1A1A1A; color:#fff; border-radius:4px; font-size:.9rem; }
+    .batch-bar .assin-info { flex:1; min-width:200px; font-size:.85rem; opacity:.9; }
+    .batch-bar .assin-info strong { color:#FFD27D; font-weight:600; }
     .batch-bar button { background:var(--ok); color:#fff; border:none; padding:.55rem 1.2rem; border-radius:4px; font-weight:600; cursor:pointer; font-size:.88rem; }
     .batch-bar button:hover { background:#156732; }
     .batch-bar .count { font-size:.85rem; opacity:.8; }
@@ -64,7 +65,7 @@
         .req-head-actions { width:100%; }
         .req-table { min-width:680px; }
         .batch-bar { flex-direction:column; align-items:stretch; }
-        .batch-bar input[type=text] { min-width:0; width:100%; }
+        .batch-bar .assin-info { min-width:0; width:100%; }
         .batch-bar button { width:100%; }
         .btn-expand { padding:.2rem .7rem; }
     }
@@ -89,7 +90,7 @@
 
 <div class="batch-bar" id="batchBar">
     <span class="count"><strong id="nSel">0</strong> selecionada(s)</span>
-    <input type="text" id="assinaturaLote" placeholder="Assinatura (seu nome completo)" autocomplete="off">
+    <span class="assin-info">Assinará como <strong>{{ current_user.nome if current_user else '' }}</strong></span>
     <button onclick="aprovarLote()">Assinar em lote</button>
     <button style="background:#444" onclick="limparSelecao()">Limpar</button>
 </div>
@@ -241,21 +242,18 @@ function limparSelecao() {
 }
 
 async function aprovarLote() {
-    const assinatura = document.getElementById('assinaturaLote').value.trim();
-    if (!assinatura) { alert('Informe a assinatura.'); return; }
     if (!selecionadas.size) return;
-    if (!confirm(`Autorizar ${selecionadas.size} requisição(ões) com a assinatura "${assinatura}"?`)) return;
+    if (!confirm(`Autorizar ${selecionadas.size} requisição(ões)? Todas serão assinadas com seu nome de usuário.`)) return;
 
     const res = await fetch('/api/requisicoes/aprovar-lote', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ids: Array.from(selecionadas), assinatura})
+        body: JSON.stringify({ids: Array.from(selecionadas)})
     });
     const data = await res.json();
     if (data.erro) { alert(data.erro); return; }
     alert(`Autorizadas: ${data.aprovadas.length}\nFalhas: ${data.falhas.length}`);
     selecionadas.clear();
-    document.getElementById('assinaturaLote').value = '';
     carregar();
 }
 
