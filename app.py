@@ -2386,10 +2386,8 @@ def _aprovar_uma(db, req_id, assinatura):
 @api_master_required
 def api_requisicao_aprovar(req_id):
     db = get_db()
-    data = request.get_json(silent=True) or {}
-    assinatura = (data.get('assinatura') or '').strip()
-    if not assinatura:
-        return jsonify({'erro': 'Informe a assinatura.'}), 400
+    # Assinatura sempre é o nome do master logado — não pode ser sobrescrito pelo cliente
+    assinatura = current_user()['nome']
     ok, info = _aprovar_uma(db, req_id, assinatura)
     if not ok:
         return jsonify({'erro': f'Requisição {info}.'}), 400
@@ -2403,11 +2401,10 @@ def api_requisicao_aprovar_lote():
     db = get_db()
     data = request.get_json(silent=True) or {}
     ids = data.get('ids') or []
-    assinatura = (data.get('assinatura') or '').strip()
     if not ids or not isinstance(ids, list):
         return jsonify({'erro': 'Selecione ao menos uma requisição.'}), 400
-    if not assinatura:
-        return jsonify({'erro': 'Informe a assinatura.'}), 400
+    # Assinatura sempre é o nome do master logado
+    assinatura = current_user()['nome']
 
     aprovadas, falhas = [], []
     for rid in ids:

@@ -54,7 +54,8 @@
     .btn-pdf   { background:#111; color:#fff; }
     .btn:disabled { opacity:.5; cursor:wait; }
 
-    .assin-input { width:100%; padding:.55rem .7rem; border:1px solid var(--gray20); border-radius:4px; font-size:.88rem; margin-top:.4rem; }
+    .assin-display { background:#fff; border:1px solid var(--gray10); border-radius:4px; padding:.6rem .75rem; font-size:.88rem; margin:.5rem 0; color:var(--gray60); }
+    .assin-display strong { color:var(--red); font-weight:600; }
     .err { background:#FBD7D9; color:#A8151A; padding:.55rem .7rem; border-radius:4px; margin:.6rem 0; font-size:.85rem; display:none; }
 
     .actions { flex-wrap:wrap; }
@@ -82,6 +83,7 @@
 {% block scripts %}
 <script>
 const REQ_ID = {{ req_id }};
+const USER_NOME = {{ (current_user.nome if current_user else '') | tojson }};
 const PAPEL_PT = { pendente: 'Pendente de autorização', aprovada: 'Autorizada', rejeitada: 'Rejeitada', cancelada: 'Cancelada' };
 
 function fmtDate(s) {
@@ -146,8 +148,7 @@ function render(d) {
         authHtml = `
             <div class="card auth-card">
                 <h3>Autorização pendente</h3>
-                <p style="font-size:.85rem;color:var(--gray60);">Assine com seu nome completo para autorizar esta requisição.</p>
-                <input type="text" id="assinatura" class="assin-input" placeholder="Seu nome (assinatura digital)" autocomplete="off">
+                <div class="assin-display">Assinará como <strong>${esc(USER_NOME)}</strong></div>
                 <div class="err" id="errAuth"></div>
                 <div class="actions">
                     <button class="btn btn-green" onclick="aprovar()">Autorizar</button>
@@ -208,14 +209,12 @@ function render(d) {
 }
 
 async function aprovar() {
-    const assinatura = document.getElementById('assinatura').value.trim();
     const err = document.getElementById('errAuth');
     err.style.display = 'none';
-    if (!assinatura) { err.textContent = 'Informe a assinatura.'; err.style.display = 'block'; return; }
-    if (!confirm(`Autorizar esta requisição com a assinatura "${assinatura}"?`)) return;
+    if (!confirm(`Autorizar esta requisição assinando como "${USER_NOME}"?`)) return;
     const res = await fetch('/api/requisicoes/' + REQ_ID + '/aprovar', {
         method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({assinatura})
+        body: JSON.stringify({})
     });
     const d = await res.json();
     if (!res.ok) { err.textContent = d.erro || 'Erro.'; err.style.display = 'block'; return; }
