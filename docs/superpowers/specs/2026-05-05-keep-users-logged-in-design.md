@@ -59,7 +59,18 @@ return get_db().execute(
 ).fetchone()
 ```
 
-Efeito: usuário desativado vira "sem sessão" no próximo request → cai no `login_required` → redireciona pra tela de login. Funciona igual a logout forçado.
+### `app.py` — `before_request` que limpa sessão de usuário inválido
+
+Só filtrar em `current_user()` deixa o loop aberto: o decorator `login_required` checa apenas se `user_id` está em `session`, então um usuário desativado entra na view e os templates quebram ao tentar usar `current_user.nome` (NoneType). Adicionar handler que executa antes de cada request:
+
+```python
+@app.before_request
+def _enforce_active_user():
+    if 'user_id' in session and current_user() is None:
+        session.clear()
+```
+
+Efeito: usuário desativado tem sessão limpa no próximo request → `login_required` vê que falta `user_id` → redireciona pra `/login`. Custa uma query a mais por request autenticado, aceitável neste tamanho.
 
 ### `.env.example` — documentar `SECRET_KEY`
 
