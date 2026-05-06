@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Instalar no celular – Porto do Engenho</title>
+    <link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
+    <link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/icon-180.png') }}">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="Porto Engenho">
+    <meta name="theme-color" content="#D01B20">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}">
+    <style>
+        body { background: #F4F4F4; min-height: 100vh; }
+
+        .install-page {
+            max-width: 520px;
+            margin: 0 auto;
+            padding: 24px 16px 48px;
+            color: #1A1A1A;
+        }
+
+        .install-header {
+            text-align: center;
+            margin-bottom: 24px;
+        }
+
+        .install-header img.logo {
+            width: 140px;
+            background: #fff;
+            padding: 8px 12px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,.06);
+        }
+
+        .install-header h1 {
+            font-family: 'Barlow Condensed', sans-serif;
+            font-size: 28px;
+            font-weight: 700;
+            margin-top: 18px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            line-height: 1.1;
+        }
+
+        .install-header p.lead {
+            color: #666;
+            margin-top: 8px;
+            font-size: 15px;
+            line-height: 1.4;
+        }
+
+        .browser-warning {
+            background: #FFFCF2;
+            border: 1px solid #E6A817;
+            border-left: 4px solid #E6A817;
+            border-radius: 6px;
+            padding: 14px 16px;
+            margin-bottom: 24px;
+            font-size: 14px;
+            line-height: 1.5;
+            display: none;
+        }
+
+        .browser-warning.show { display: block; }
+        .browser-warning strong { color: #8A6A00; display: block; margin-bottom: 4px; font-size: 15px; }
+        .browser-warning code {
+            background: #FFF5DC;
+            padding: 1px 6px;
+            border-radius: 3px;
+            font-family: 'DM Mono', monospace;
+            font-size: 12.5px;
+        }
+
+        .step {
+            background: #fff;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 14px;
+            box-shadow: 0 1px 3px rgba(0,0,0,.05);
+            display: flex;
+            gap: 16px;
+            align-items: flex-start;
+        }
+
+        .step-num {
+            flex-shrink: 0;
+            width: 38px;
+            height: 38px;
+            background: #D01B20;
+            color: #fff;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 18px;
+            font-family: 'Barlow Condensed', sans-serif;
+        }
+
+        .step-body { flex: 1; min-width: 0; }
+        .step-body h2 {
+            font-size: 16px;
+            font-weight: 700;
+            margin-bottom: 6px;
+            line-height: 1.3;
+        }
+        .step-body p {
+            font-size: 14px;
+            color: #555;
+            line-height: 1.5;
+        }
+
+        .icon-share, .icon-add {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 26px;
+            height: 26px;
+            background: #f0f0f0;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            vertical-align: middle;
+            margin: 0 2px;
+        }
+        .icon-share svg, .icon-add svg { width: 16px; height: 16px; }
+
+        .safari-bar {
+            margin-top: 12px;
+            background: #F8F8F8;
+            border: 1px solid #DDD;
+            border-radius: 8px;
+            padding: 10px 12px;
+            display: flex;
+            justify-content: space-around;
+            align-items: center;
+            color: #666;
+        }
+        .safari-bar .item { font-size: 18px; opacity: .4; }
+        .safari-bar .item.highlight {
+            opacity: 1;
+            color: #007AFF;
+            position: relative;
+        }
+        .safari-bar .item.highlight::after {
+            content: '';
+            position: absolute;
+            inset: -4px;
+            border: 2px solid #D01B20;
+            border-radius: 6px;
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: .4; transform: scale(1.08); }
+        }
+
+        .success-card {
+            background: #E8F8EE;
+            border: 1px solid #1A7A3F;
+            border-left: 4px solid #1A7A3F;
+            border-radius: 8px;
+            padding: 18px 20px;
+            margin-top: 24px;
+        }
+        .success-card h2 {
+            color: #156732;
+            font-size: 17px;
+            font-weight: 700;
+            margin-bottom: 8px;
+        }
+        .success-card p {
+            font-size: 14px;
+            color: #1A4D26;
+            line-height: 1.5;
+        }
+        .success-card p + p { margin-top: 8px; }
+
+        .back-link {
+            display: block;
+            text-align: center;
+            margin-top: 24px;
+            padding: 12px;
+            color: #666;
+            text-decoration: none;
+            font-size: 14px;
+        }
+        .back-link:hover { color: #D01B20; }
+
+        @media (max-width: 480px) {
+            .install-header h1 { font-size: 24px; }
+            .step { padding: 16px; gap: 12px; }
+            .step-num { width: 34px; height: 34px; font-size: 16px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="install-page">
+
+        <div class="install-header">
+            <img src="{{ url_for('static', filename='logo.jpg') }}" alt="Porto do Engenho" class="logo">
+            <h1>Instalar no celular</h1>
+            <p class="lead">Acesse o sistema com 1 toque na tela inicial, sem precisar abrir o Safari nem digitar senha.</p>
+        </div>
+
+        <div class="browser-warning" id="browserWarning">
+            <strong>⚠️ Você não está no Safari</strong>
+            Os passos abaixo só funcionam no <strong>Safari</strong>. Se chegou aqui pelo WhatsApp, toque nos três pontinhos (<code>⋯</code>) no canto superior direito e escolha <strong>"Abrir no Safari"</strong>.
+        </div>
+
+        <div class="step">
+            <div class="step-num">1</div>
+            <div class="step-body">
+                <h2>Toque no botão de Compartilhar</h2>
+                <p>Na barra de ferramentas do Safari (na parte de baixo da tela no iPhone), toque no ícone do quadrado com seta para cima:</p>
+                <div class="safari-bar">
+                    <span class="item">‹</span>
+                    <span class="item">›</span>
+                    <span class="item highlight" aria-label="Compartilhar">
+                        <svg viewBox="0 0 24 24" fill="currentColor" width="22" height="22">
+                            <path d="M12 2.5l4 4-1.4 1.4L13 6.3v10.2h-2V6.3L9.4 7.9 8 6.5l4-4z"/>
+                            <path d="M5 11h3v2H7v8h10v-8h-1v-2h3v12H5V11z"/>
+                        </svg>
+                    </span>
+                    <span class="item">▭</span>
+                    <span class="item">⌘</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="step">
+            <div class="step-num">2</div>
+            <div class="step-body">
+                <h2>Procure "Adicionar à Tela de Início"</h2>
+                <p>Vai abrir um menu cheio de opções. Role para baixo e procure essa linha — o ícone parece um quadrado com sinal de mais
+                <span class="icon-add">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                        <rect x="4" y="4" width="16" height="16" rx="3"/>
+                        <line x1="12" y1="9" x2="12" y2="15"/>
+                        <line x1="9" y1="12" x2="15" y2="12"/>
+                    </svg>
+                </span>
+                . Toque nessa opção.</p>
+            </div>
+        </div>
+
+        <div class="step">
+            <div class="step-num">3</div>
+            <div class="step-body">
+                <h2>Confirme tocando em "Adicionar"</h2>
+                <p>Aparece uma tela de pré-visualização com o nome <strong>"Porto Engenho"</strong> e o logo da fazenda. No canto <strong>superior direito</strong>, toque no botão <strong>Adicionar</strong>.</p>
+            </div>
+        </div>
+
+        <div class="success-card">
+            <h2>✅ Pronto!</h2>
+            <p>O ícone do <strong>Porto Engenho</strong> agora está na sua tela inicial, junto com seus outros apps.</p>
+            <p>Toque nele e o sistema abre direto, em tela cheia, sem barra do Safari. Você só precisa fazer login uma vez — depois disso, fica conectado por <strong>1 ano</strong>.</p>
+        </div>
+
+        <a href="/login" class="back-link">← Voltar para o login</a>
+
+    </div>
+
+    <script>
+        // Detecta se está no Safari de verdade. Se for WebView do WhatsApp/Instagram/etc,
+        // mostra o aviso amarelo no topo.
+        (function() {
+            const ua = navigator.userAgent;
+            const isIOS = /iPhone|iPad|iPod/.test(ua);
+            const isSafari = /Safari/.test(ua) && !/CriOS|FxiOS|EdgiOS|GSA|FBAN|FBAV|Instagram|Line\//.test(ua);
+            const isWebView = isIOS && !isSafari;
+            // Mostra aviso se: está em iOS mas não no Safari (= WebView de outro app)
+            // OU se não está em iOS de jeito nenhum (= computador/Android, e não vai funcionar mesmo)
+            if (isWebView || !isIOS) {
+                const w = document.getElementById('browserWarning');
+                if (!isIOS) {
+                    w.querySelector('strong').textContent = '⚠️ Esta página é para iPhone';
+                    w.innerHTML = '<strong>⚠️ Esta página é para iPhone</strong>Este tutorial só funciona em iPhone com Safari. No computador, basta usar o navegador normalmente.';
+                }
+                w.classList.add('show');
+            }
+        })();
+    </script>
+</body>
+</html>

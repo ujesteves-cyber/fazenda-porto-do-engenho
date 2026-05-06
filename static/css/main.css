@@ -754,6 +754,19 @@ body {
     background: var(--red-dk);
 }
 
+.install-link {
+    display: block;
+    text-align: center;
+    margin-top: 18px;
+    padding-top: 16px;
+    border-top: 1px solid #333;
+    color: var(--gray40);
+    text-decoration: none;
+    font-size: 13px;
+}
+
+.install-link:hover { color: var(--white); }
+
 /* ── Hamburger ───────────────────────────────────────────── */
 
 .hamburger {
