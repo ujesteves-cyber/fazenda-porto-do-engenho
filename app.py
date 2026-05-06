@@ -3,7 +3,7 @@ import sqlite3
 import json
 import csv
 import io
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import wraps
 from zoneinfo import ZoneInfo
 
@@ -80,6 +80,22 @@ load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env'), ov
 
 app = Flask(__name__)
 app.secret_key = os.getenv('SECRET_KEY', 'dev-secret-key-change-me')
+
+# Sessão persistente: usuário fica logado por 365 dias após cada login,
+# mesmo após fechar o navegador. Sai quando clica em "Sair" ou expira.
+_IS_DEV = os.getenv('FLASK_ENV') == 'development'
+app.permanent_session_lifetime = timedelta(days=365)
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE='Lax',
+    SESSION_COOKIE_SECURE=not _IS_DEV,
+)
+
+if app.secret_key == 'dev-secret-key-change-me' and not _IS_DEV:
+    raise RuntimeError(
+        'SECRET_KEY precisa ser configurado em produção. '
+        'Gere com: python -c "import secrets; print(secrets.token_hex(32))"'
+    )
 
 DATA_DIR = os.getenv('DATA_DIR') or os.path.join(os.path.dirname(__file__), 'data')
 DATABASE = os.path.join(DATA_DIR, 'fazenda167.db')
@@ -180,9 +196,17 @@ def current_user():
     if 'user_id' not in session:
         return None
     return get_db().execute(
-        "SELECT id, nome, email, papel FROM usuarios WHERE id=?",
+        "SELECT id, nome, email, papel FROM usuarios WHERE id=? AND ativo=1",
         (session['user_id'],)
     ).fetchone()
+
+
+@app.before_request
+def _enforce_active_user():
+    """Limpa sessão se o usuário foi desativado — sem isso, sessão de 365 dias
+    permitiria acesso de ex-usuários até o cookie expirar."""
+    if 'user_id' in session and current_user() is None:
+        session.clear()
 
 
 def is_master(user=None):
@@ -229,6 +253,7 @@ def login():
             "SELECT * FROM usuarios WHERE email=? AND ativo=1", (email,)
         ).fetchone()
         if user and bcrypt.checkpw(senha, user['senha_hash'].encode()):
+            session.permanent = True
             session['user_id'] = user['id']
             session['user_nome'] = user['nome']
             next_url = request.args.get('next', '/')
