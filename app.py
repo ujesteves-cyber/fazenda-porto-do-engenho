@@ -262,6 +262,13 @@ def login():
     return render_template('login.html')
 
 
+@app.route('/instalar')
+def instalar():
+    """Tutorial pra instalar o sistema como PWA na tela inicial do iPhone.
+    Acessível sem login — link enviado por WhatsApp aos usuários."""
+    return render_template('instalar.html')
+
+
 @app.route('/logout')
 def logout():
     session.clear()

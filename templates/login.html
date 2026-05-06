@@ -4,6 +4,12 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Login – Porto do Engenho</title>
+    <link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
+    <link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/icon-180.png') }}">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="Porto Engenho">
+    <meta name="theme-color" content="#D01B20">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}">
 </head>
 <body>
@@ -32,6 +38,7 @@
                 </div>
                 <button type="submit" class="btn-login">Entrar</button>
             </form>
+            <a href="/instalar" class="install-link">📱 Instalar no celular</a>
         </div>
     </div>
 </body>
