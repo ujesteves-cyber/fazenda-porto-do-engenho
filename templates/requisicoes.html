@@ -269,6 +269,9 @@ document.getElementById('escopoMeus').addEventListener('change', e => {
     ESCOPO = e.target.checked ? 'meus' : '';
     carregar();
 });
+document.getElementById('pdfPendentesBtn').addEventListener('click', e => {
+    e.currentTarget.href = '/requisicoes/pendentes.pdf?t=' + Date.now();
+});
 carregar();
 </script>
 {% endblock %}
