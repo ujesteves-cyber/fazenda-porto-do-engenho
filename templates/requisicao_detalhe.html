@@ -200,6 +200,18 @@ function render(d) {
             <div>
                 ${authHtml}
                 <div class="card" style="margin-top:1rem;">
+                    <h3>Imprimir</h3>
+                    <div class="actions">
+                        <a href="/requisicoes/${r.id}/imprimir.pdf"
+                           target="_blank"
+                           onclick="this.href='/requisicoes/${r.id}/imprimir.pdf?t='+Date.now()"
+                           class="btn btn-pdf">🖨 Imprimir para assinar</a>
+                    </div>
+                    <p style="font-size:.78rem;color:var(--gray60);margin-top:.55rem;line-height:1.4;">
+                        PDF de uma página com espaço em branco para assinatura à mão. Útil pra imprimir e levar pra autorizar fisicamente, ou arquivar uma cópia.
+                    </p>
+                </div>
+                <div class="card" style="margin-top:1rem;">
                     <h3>Histórico</h3>
                     <ul class="hist">${histHtml}</ul>
                 </div>
