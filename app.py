@@ -2694,6 +2694,187 @@ def _gerar_pdf_requisicao(req, itens):
     return buf.read()
 
 
+# ── PDF: requisição individual com espaço para assinar manualmente ─
+
+@app.route('/requisicoes/<int:req_id>/imprimir.pdf')
+@login_required
+def requisicao_imprimir_pdf(req_id):
+    """PDF de uma requisição (qualquer status) com bloco de assinatura em branco
+    para assinar à mão. Distinto da rota /pdf, que só gera o comprovante oficial
+    pós-aprovação."""
+    db = get_db()
+    user = current_user()
+    req, itens, _ = _req_fetch(db, req_id)
+    if not req:
+        return "Requisição não encontrada.", 404
+    if not is_master(user) and req['solicitante_id'] != user['id']:
+        return "Sem permissão.", 403
+
+    pdf_bytes = _gerar_pdf_imprimir(req, itens)
+    stamp = now_local().strftime('%Y%m%d_%H%M')
+    return Response(
+        pdf_bytes,
+        mimetype='application/pdf',
+        headers={
+            'Content-Disposition': f'inline; filename=requisicao_{req["numero"]}_{stamp}.pdf',
+            'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+            'Pragma': 'no-cache',
+            'Expires': '0',
+        }
+    )
+
+
+def _gerar_pdf_imprimir(req, itens):
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import cm
+    from reportlab.lib import colors
+    from reportlab.pdfgen import canvas
+    from reportlab.platypus import Table, TableStyle
+
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=A4)
+    w, h = A4
+    margin = 2 * cm
+    red = colors.HexColor('#D01B20')
+    black = colors.HexColor('#1A1A1A')
+    gray = colors.HexColor('#666666')
+
+    status_pt = {
+        'pendente':   'PENDENTE',
+        'aprovada':   'AUTORIZADA',
+        'rejeitada':  'REJEITADA',
+        'cancelada':  'CANCELADA',
+    }.get(req['status'], req['status'].upper())
+
+    # Cabeçalho com logo
+    logo_path = os.path.join(os.path.dirname(__file__), 'static', 'logo.jpg')
+    try:
+        if os.path.exists(logo_path):
+            c.drawImage(logo_path, margin, h - margin - 2.2*cm, width=3.2*cm, height=2.2*cm,
+                        preserveAspectRatio=True, mask='auto')
+    except Exception:
+        pass
+
+    c.setFillColor(black)
+    c.setFont('Helvetica-Bold', 14)
+    c.drawString(margin + 3.8*cm, h - margin - 0.8*cm, 'FAZENDA PORTO DO ENGENHO')
+    c.setFont('Helvetica-Bold', 12)
+    c.drawString(margin + 3.8*cm, h - margin - 1.4*cm, 'REQUISIÇÃO DE COMPRA')
+    c.setFont('Helvetica', 9)
+    c.setFillColor(gray)
+    c.drawString(margin + 3.8*cm, h - margin - 2.0*cm,
+                 f'Nº {req["numero"]} · Status atual: {status_pt}')
+
+    c.setStrokeColor(red); c.setLineWidth(2)
+    y = h - margin - 2.6*cm
+    c.line(margin, y, w - margin, y)
+
+    # Metadados
+    y -= 0.8*cm
+    c.setFillColor(black)
+    c.setFont('Helvetica-Bold', 10); c.drawString(margin, y, 'Data da solicitação:')
+    c.setFont('Helvetica', 10);       c.drawString(margin + 4.0*cm, y, _fmt_dt(req['data_solicitacao']))
+
+    y -= 0.55*cm
+    c.setFont('Helvetica-Bold', 10); c.drawString(margin, y, 'Solicitante:')
+    c.setFont('Helvetica', 10);       c.drawString(margin + 2.5*cm, y, req['solicitante_nome'] or '')
+
+    y -= 0.55*cm
+    c.setFont('Helvetica-Bold', 10); c.drawString(margin, y, 'Responsável pela solicitação:')
+    c.setFont('Helvetica', 10);       c.drawString(margin + 5.6*cm, y, req['responsavel'] or '')
+
+    y -= 0.55*cm
+    c.setFont('Helvetica-Bold', 10); c.drawString(margin, y, 'Funcionário que fará a retirada:')
+    c.setFont('Helvetica', 10);       c.drawString(margin + 5.9*cm, y, req['funcionario_retirada'] or '')
+
+    y -= 0.55*cm
+    c.setFont('Helvetica-Bold', 10); c.drawString(margin, y, 'Fornecedor:')
+    c.setFont('Helvetica', 10);       c.drawString(margin + 2.4*cm, y, req['fornecedor'] or '')
+
+    # Itens
+    y -= 0.9*cm
+    c.setFont('Helvetica-Bold', 11); c.drawString(margin, y, 'Materiais solicitados:')
+    y -= 0.4*cm
+
+    data = [['#', 'Quantidade', 'Descrição']]
+    for it in itens:
+        data.append([str(it['ordem']), it['quantidade'] or '', it['descricao'] or ''])
+    if not itens:
+        data.append(['-', '-', '(sem itens)'])
+    tbl = Table(data, colWidths=[1.0*cm, 3.2*cm, w - 2*margin - 4.2*cm])
+    tbl.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), red),
+        ('TEXTCOLOR',  (0, 0), (-1, 0), colors.white),
+        ('FONTNAME',   (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE',   (0, 0), (-1, -1), 9),
+        ('VALIGN',     (0, 0), (-1, -1), 'TOP'),
+        ('GRID',       (0, 0), (-1, -1), 0.3, colors.HexColor('#CCCCCC')),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F7F7F7')]),
+        ('LEFTPADDING', (0, 0), (-1, -1), 6),
+        ('RIGHTPADDING',(0, 0), (-1, -1), 6),
+        ('TOPPADDING',  (0, 0), (-1, -1), 5),
+        ('BOTTOMPADDING',(0, 0), (-1, -1), 5),
+    ]))
+    tw, th = tbl.wrap(w - 2*margin, y)
+    tbl.drawOn(c, margin, y - th)
+    y = y - th - 0.5*cm
+
+    # Observações
+    if req['observacoes']:
+        c.setFont('Helvetica-Bold', 10); c.drawString(margin, y, 'Observações:')
+        y -= 0.4*cm
+        c.setFont('Helvetica', 9)
+        for linha in req['observacoes'].splitlines() or [req['observacoes']]:
+            c.drawString(margin, y, linha[:110])
+            y -= 0.4*cm
+
+    # Bloco de assinatura manual
+    y -= 0.5*cm
+    c.setStrokeColor(red); c.setLineWidth(1.2)
+    box_h = 4.6*cm
+    c.rect(margin, y - box_h, w - 2*margin, box_h, stroke=1, fill=0)
+
+    c.setFillColor(red); c.setFont('Helvetica-Bold', 11)
+    c.drawString(margin + 0.4*cm, y - 0.6*cm, 'AUTORIZAÇÃO MANUAL')
+
+    c.setFillColor(black); c.setFont('Helvetica', 9)
+    c.drawString(margin + 0.4*cm, y - 1.2*cm,
+                 'Marque a opção desejada e assine para autorizar ou rejeitar:')
+
+    # Checkboxes APROVAR / REJEITAR
+    c.setLineWidth(0.8)
+    c.rect(margin + 0.4*cm, y - 2.05*cm, 0.5*cm, 0.5*cm, stroke=1, fill=0)
+    c.setFont('Helvetica-Bold', 11)
+    c.drawString(margin + 1.1*cm, y - 1.9*cm, 'APROVAR')
+
+    c.rect(margin + 5.5*cm, y - 2.05*cm, 0.5*cm, 0.5*cm, stroke=1, fill=0)
+    c.drawString(margin + 6.2*cm, y - 1.9*cm, 'REJEITAR')
+
+    # Linha de assinatura + data
+    c.setFont('Helvetica', 9)
+    c.drawString(margin + 0.4*cm, y - 3.2*cm, 'Assinatura:')
+    c.line(margin + 2.4*cm, y - 3.2*cm, margin + 12.0*cm, y - 3.2*cm)
+    c.drawString(margin + 12.6*cm, y - 3.2*cm, 'Data:')
+    c.line(margin + 13.8*cm, y - 3.2*cm, w - margin - 0.4*cm, y - 3.2*cm)
+
+    # Nome em letra de forma
+    c.drawString(margin + 0.4*cm, y - 4.1*cm, 'Nome (letra de forma):')
+    c.line(margin + 4.8*cm, y - 4.1*cm, w - margin - 0.4*cm, y - 4.1*cm)
+
+    # Rodapé
+    c.setFont('Helvetica', 7); c.setFillColor(gray)
+    c.drawString(margin, margin - 0.6*cm,
+                 f'Documento gerado eletronicamente · Nº {req["numero"]} · '
+                 f'{now_local().strftime("%d/%m/%Y %H:%M")}')
+    c.drawRightString(w - margin, margin - 0.6*cm,
+                      '(27) 3225-8853 · fazendaportodoengenho@gmail.com')
+
+    c.showPage()
+    c.save()
+    buf.seek(0)
+    return buf.read()
+
+
 # ── PDF: lista de pendentes para assinatura física ─────────────────
 
 @app.route('/requisicoes/pendentes.pdf')
