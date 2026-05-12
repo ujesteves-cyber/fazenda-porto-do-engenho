@@ -272,3 +272,39 @@ def test_importar_confirmar_segunda_vez_ignora(client):
         "arquivo": "f.pdf", "data_planilha": "30/04/2026", "linhas": linhas})
     assert r2.json["novos"] == 0
     assert r2.json["ignorados"] == 1
+
+
+def test_reconciliar_preview_detecta_divergencia(client):
+    # Sistema tem 1 lote com qtd 5
+    _insert_lote(client, doadora="REC", qtd_atual=5,
+                 dt_opu="01/01/26", dt_vitrificacao="10/01/26")
+    # Planilha mostra mesmo lote mas com qtd 3
+    payload = {
+        "linhas": [{
+            "dt_opu": "01/01/26", "dt_vitrificacao": "10/01/26",
+            "doadora": "REC", "touro": "CIA ROBUSTO JATA",
+            "tipo_semen": "Sex F", "qtd": 3, "obs": ""
+        }],
+        "data_planilha": "30/04/2026",
+    }
+    r = client.post("/api/embrioes/reconciliar/preview", json=payload)
+    assert r.status_code == 200
+    diffs = r.json["divergentes"]
+    assert len(diffs) == 1
+    assert diffs[0]["sistema"] == 5
+    assert diffs[0]["planilha"] == 3
+    assert diffs[0]["diferenca"] == -2
+
+
+def test_reconciliar_aplicar_cria_ajuste(client):
+    _insert_lote(client, doadora="REC", qtd_atual=5,
+                 dt_opu="01/01/26", dt_vitrificacao="10/01/26")
+    r = client.post("/api/embrioes/reconciliar/aplicar", json={
+        "data_planilha": "30/04/2026",
+        "ajustes": [{"lote_id": 1, "diferenca": -2}]
+    })
+    assert r.status_code == 200
+    r2 = client.get("/api/embrioes/1")
+    assert r2.json["lote"]["qtd_atual"] == 3
+    assert r2.json["movimentos"][0]["tipo"] == "ajuste_lab"
+    assert r2.json["movimentos"][0]["qtd"] == 2

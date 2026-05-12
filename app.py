@@ -3780,6 +3780,120 @@ def api_embrioes_importar_confirmar():
         return jsonify({'erro': str(e)}), 500
 
 
+@app.route('/api/embrioes/reconciliar/preview', methods=['POST'])
+@api_master_required
+def api_embrioes_reconciliar_preview():
+    """Compare DB lotes vs PDF rows. Returns 3 lists: novos, sumidos, divergentes."""
+    payload = request.json or {}
+    linhas = payload.get('linhas') or []
+    db = get_db()
+    # Build lookup of planilha rows by unique key
+    chave = lambda r: (
+        (r.get('dt_opu') or '').strip(),
+        (r.get('dt_vitrificacao') or '').strip(),
+        (r.get('doadora') or '').strip(),
+        (r.get('touro') or '').strip().upper(),
+        r.get('tipo_semen') or 'Conv.',
+    )
+    pdf_map = {chave(r): int(r.get('qtd', 0)) for r in linhas}
+
+    db_rows = db.execute(
+        "SELECT id, dt_opu, dt_vitrificacao, doadora, touro, tipo_semen, qtd_atual "
+        "FROM embriao_lote"
+    ).fetchall()
+
+    novos, sumidos, divergentes = [], [], []
+    db_keys = set()
+    for r in db_rows:
+        k = (r['dt_opu'] or '', r['dt_vitrificacao'] or '',
+             r['doadora'], r['touro'], r['tipo_semen'])
+        db_keys.add(k)
+        if k in pdf_map:
+            if pdf_map[k] != r['qtd_atual']:
+                divergentes.append({
+                    'lote_id': r['id'],
+                    'doadora': r['doadora'],
+                    'touro': r['touro'],
+                    'tipo_semen': r['tipo_semen'],
+                    'dt_vitrificacao': r['dt_vitrificacao'],
+                    'sistema': r['qtd_atual'],
+                    'planilha': pdf_map[k],
+                    'diferenca': pdf_map[k] - r['qtd_atual'],
+                })
+        elif r['qtd_atual'] > 0:
+            sumidos.append({
+                'lote_id': r['id'],
+                'doadora': r['doadora'],
+                'touro': r['touro'],
+                'tipo_semen': r['tipo_semen'],
+                'dt_vitrificacao': r['dt_vitrificacao'],
+                'sistema': r['qtd_atual'],
+            })
+
+    for k, qtd_pdf in pdf_map.items():
+        if k not in db_keys and qtd_pdf > 0:
+            novos.append({
+                'dt_opu': k[0], 'dt_vitrificacao': k[1],
+                'doadora': k[2], 'touro': k[3],
+                'tipo_semen': k[4], 'qtd': qtd_pdf,
+            })
+
+    return jsonify({'novos': novos, 'sumidos': sumidos, 'divergentes': divergentes})
+
+
+@app.route('/api/embrioes/reconciliar/aplicar', methods=['POST'])
+@api_master_required
+def api_embrioes_reconciliar_aplicar():
+    """Apply selected adjustments. Creates ajuste_lab movements."""
+    payload = request.json or {}
+    ajustes = payload.get('ajustes') or []
+    data_planilha = (payload.get('data_planilha') or '').strip() or '?'
+
+    db = get_db()
+    db.execute('BEGIN')
+    aplicados = 0
+    try:
+        for adj in ajustes:
+            lote_id = adj.get('lote_id')
+            try:
+                diff = int(adj.get('diferenca', 0))
+            except (TypeError, ValueError):
+                continue
+            if diff == 0:
+                continue
+            if diff > 0:
+                # Sistema tinha menos que planilha — devolve embriões
+                db.execute(
+                    "UPDATE embriao_lote SET qtd_atual = qtd_atual + ? WHERE id=?",
+                    (diff, lote_id)
+                )
+                qtd_mov = diff
+                obs = f"Reconciliação com planilha {data_planilha}: sistema +{diff}."
+            else:
+                qtd_mov = -diff  # positivo
+                lote = db.execute(
+                    "SELECT qtd_atual FROM embriao_lote WHERE id=?", (lote_id,)
+                ).fetchone()
+                if not lote or qtd_mov > lote['qtd_atual']:
+                    continue  # skip if would go negative
+                db.execute(
+                    "UPDATE embriao_lote SET qtd_atual = qtd_atual - ? WHERE id=?",
+                    (qtd_mov, lote_id)
+                )
+                obs = f"Reconciliação com planilha {data_planilha}: sistema -{qtd_mov}."
+            db.execute("""
+                INSERT INTO embriao_movimento
+                  (lote_id, tipo, qtd, data, obs, created_by)
+                VALUES (?, 'ajuste_lab', ?, ?, ?, ?)
+            """, (lote_id, qtd_mov, data_planilha, obs, session.get('user_id')))
+            aplicados += 1
+        db.commit()
+        return jsonify({'ok': True, 'aplicados': aplicados})
+    except Exception as e:
+        db.rollback()
+        return jsonify({'erro': str(e)}), 500
+
+
 # ── Init & Run ─────────────────────────────────────────────────────
 
 with app.app_context():
