@@ -2,6 +2,7 @@
 
 Pure-function module isolated from Flask for easy unit testing.
 """
+import os
 import re
 from typing import Optional
 
@@ -36,7 +37,6 @@ def parse_fivet_pdf(file_path: str) -> dict:
         FileNotFoundError: if `file_path` does not exist.
         ValueError: if the main table cannot be located in the PDF.
     """
-    import os
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"PDF não encontrado: {file_path}")
 
