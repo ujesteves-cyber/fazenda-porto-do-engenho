@@ -130,3 +130,53 @@ def test_embrioes_detalhe_inclui_lote_e_movimentos_vazios(client):
     assert r.json["kpis"]["usado_te"] == 0
     assert r.json["kpis"]["vendido"] == 0
     assert r.json["kpis"]["receita"] == 0
+
+
+def test_embrioes_criar_manual(client):
+    payload = {
+        "dt_opu": "01/01/26", "dt_vitrificacao": "10/01/26",
+        "doadora": "X100", "touro": "TOURO TESTE",
+        "tipo_semen": "Conv.", "qtd": 5, "obs": "manual"
+    }
+    r = client.post("/api/embrioes", json=payload)
+    assert r.status_code == 200
+    assert r.json["ok"] is True
+    assert r.json["id"] > 0
+
+
+def test_embrioes_criar_manual_duplicado_409(client):
+    payload = {
+        "dt_opu": "01/01/26", "dt_vitrificacao": "10/01/26",
+        "doadora": "X100", "touro": "TOURO TESTE",
+        "tipo_semen": "Conv.", "qtd": 5
+    }
+    r1 = client.post("/api/embrioes", json=payload)
+    assert r1.status_code == 200
+    r2 = client.post("/api/embrioes", json=payload)
+    assert r2.status_code == 409
+
+
+def test_embrioes_editar_requer_master_se_master_only(client):
+    # Inserts via helper
+    _insert_lote(client, doadora="EDIT", qtd_atual=3)
+    r = client.put("/api/embrioes/1", json={"obs": "atualizado"})
+    # Logged user is master in fixture, so should succeed
+    assert r.status_code == 200
+    assert r.json["ok"] is True
+
+
+def test_embrioes_editar_nao_permite_alterar_qtd_atual(client):
+    _insert_lote(client, doadora="EDIT", qtd_atual=3)
+    r = client.put("/api/embrioes/1", json={"qtd_atual": 99})
+    assert r.status_code == 200
+    # Verify qtd_atual unchanged
+    r2 = client.get("/api/embrioes/1")
+    assert r2.json["lote"]["qtd_atual"] == 3
+
+
+def test_embrioes_excluir(client):
+    _insert_lote(client, doadora="DEL", qtd_atual=2)
+    r = client.delete("/api/embrioes/1")
+    assert r.status_code == 200
+    r2 = client.get("/api/embrioes/1")
+    assert r2.status_code == 404

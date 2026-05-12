@@ -3468,6 +3468,49 @@ def api_embrioes_kpis():
     })
 
 
+@app.route('/api/embrioes', methods=['POST'])
+@api_login_required
+def api_embrioes_criar():
+    data = request.json or {}
+    required = ['doadora', 'touro', 'tipo_semen', 'qtd']
+    for k in required:
+        if not data.get(k):
+            return jsonify({'erro': f'Campo obrigatório: {k}'}), 400
+    try:
+        qtd = int(data['qtd'])
+    except (TypeError, ValueError):
+        return jsonify({'erro': 'qtd deve ser inteiro'}), 400
+    if qtd <= 0:
+        return jsonify({'erro': 'qtd deve ser positivo'}), 400
+    tipo = data['tipo_semen']
+    if tipo not in ('Sex F', 'Conv.'):
+        return jsonify({'erro': 'tipo_semen inválido'}), 400
+
+    doadora = data['doadora'].strip()
+    db = get_db()
+    try:
+        cur = db.execute("""
+            INSERT INTO embriao_lote
+              (dt_opu, dt_vitrificacao, doadora, doadora_matriz_id,
+               touro, tipo_semen, qtd_inicial, qtd_atual, obs, arquivo_origem)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            (data.get('dt_opu') or '').strip(),
+            (data.get('dt_vitrificacao') or '').strip(),
+            doadora,
+            lookup_matriz(doadora),
+            data['touro'].strip().upper(),
+            tipo,
+            qtd, qtd,
+            (data.get('obs') or '').strip() or None,
+            'manual',
+        ))
+        db.commit()
+        return jsonify({'ok': True, 'id': cur.lastrowid})
+    except sqlite3.IntegrityError:
+        return jsonify({'erro': 'Lote já existe (mesma chave única)'}), 409
+
+
 @app.route('/api/embrioes/<int:lote_id>', methods=['GET'])
 @api_login_required
 def api_embrioes_detalhe(lote_id):
@@ -3477,6 +3520,7 @@ def api_embrioes_detalhe(lote_id):
     ).fetchone()
     if not lote:
         return jsonify({'erro': 'Lote não encontrado'}), 404
+
 
     movs = [dict(r) for r in db.execute(
         "SELECT m.*, u.nome AS user_nome FROM embriao_movimento m "
@@ -3502,6 +3546,50 @@ def api_embrioes_detalhe(lote_id):
             'receita': agg['receita'],
         },
     })
+
+
+@app.route('/api/embrioes/<int:lote_id>', methods=['PUT'])
+@api_master_required
+def api_embrioes_editar(lote_id):
+    data = request.json or {}
+    # Whitelist of editable fields (qtd_atual deliberately excluded)
+    editable = ['dt_opu', 'dt_vitrificacao', 'doadora', 'touro',
+                'tipo_semen', 'obs']
+    sets, params = [], []
+    for k in editable:
+        if k in data:
+            v = (data[k] or '').strip() if isinstance(data[k], str) else data[k]
+            if k == 'touro' and v:
+                v = v.upper()
+            if k == 'tipo_semen' and v not in ('Sex F', 'Conv.'):
+                return jsonify({'erro': 'tipo_semen inválido'}), 400
+            sets.append(f"{k}=?")
+            params.append(v if v != '' else None)
+    if not sets:
+        return jsonify({'ok': True})
+    # Re-link doadora if it changed
+    if 'doadora' in data:
+        sets.append("doadora_matriz_id=?")
+        params.append(lookup_matriz(data['doadora']))
+    params.append(lote_id)
+    db = get_db()
+    try:
+        db.execute(f"UPDATE embriao_lote SET {','.join(sets)} WHERE id=?", params)
+        db.commit()
+    except sqlite3.IntegrityError as e:
+        return jsonify({'erro': f'Conflito de unicidade: {e}'}), 409
+    return jsonify({'ok': True})
+
+
+@app.route('/api/embrioes/<int:lote_id>', methods=['DELETE'])
+@api_master_required
+def api_embrioes_excluir(lote_id):
+    db = get_db()
+    cur = db.execute("DELETE FROM embriao_lote WHERE id=?", (lote_id,))
+    db.commit()
+    if cur.rowcount == 0:
+        return jsonify({'erro': 'Lote não encontrado'}), 404
+    return jsonify({'ok': True})
 
 
 # ── Init & Run ─────────────────────────────────────────────────────
