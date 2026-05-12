@@ -111,3 +111,22 @@ def test_embrioes_kpis_basico(client):
     assert r.json["doadoras"] == 2
     assert r.json["touros"] == 1  # both default to "CIA ROBUSTO JATA"
     assert r.json["receita_total"] == 0
+
+
+def test_embrioes_detalhe_lote_inexistente_404(client):
+    r = client.get("/api/embrioes/999")
+    assert r.status_code == 404
+
+
+def test_embrioes_detalhe_inclui_lote_e_movimentos_vazios(client):
+    _insert_lote(client, doadora="R3529", qtd_atual=6)
+    # The id auto-increments from 1
+    r = client.get("/api/embrioes/1")
+    assert r.status_code == 200
+    assert r.json["lote"]["doadora"] == "R3529"
+    assert r.json["lote"]["qtd_atual"] == 6
+    assert r.json["movimentos"] == []
+    assert r.json["kpis"]["restante"] == 6
+    assert r.json["kpis"]["usado_te"] == 0
+    assert r.json["kpis"]["vendido"] == 0
+    assert r.json["kpis"]["receita"] == 0

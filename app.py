@@ -3468,6 +3468,42 @@ def api_embrioes_kpis():
     })
 
 
+@app.route('/api/embrioes/<int:lote_id>', methods=['GET'])
+@api_login_required
+def api_embrioes_detalhe(lote_id):
+    db = get_db()
+    lote = db.execute(
+        "SELECT * FROM embriao_lote WHERE id=?", (lote_id,)
+    ).fetchone()
+    if not lote:
+        return jsonify({'erro': 'Lote não encontrado'}), 404
+
+    movs = [dict(r) for r in db.execute(
+        "SELECT m.*, u.nome AS user_nome FROM embriao_movimento m "
+        "LEFT JOIN usuarios u ON u.id=m.created_by "
+        "WHERE m.lote_id=? ORDER BY m.data, m.id", (lote_id,)
+    ).fetchall()]
+
+    agg = db.execute("""
+        SELECT
+            COALESCE(SUM(CASE WHEN tipo='te_interna' THEN qtd END), 0) AS usado_te,
+            COALESCE(SUM(CASE WHEN tipo='venda'       THEN qtd END), 0) AS vendido,
+            COALESCE(SUM(CASE WHEN tipo='venda'       THEN valor_total END), 0) AS receita
+        FROM embriao_movimento WHERE lote_id=?
+    """, (lote_id,)).fetchone()
+
+    return jsonify({
+        'lote': dict(lote),
+        'movimentos': movs,
+        'kpis': {
+            'restante': lote['qtd_atual'],
+            'usado_te': agg['usado_te'],
+            'vendido': agg['vendido'],
+            'receita': agg['receita'],
+        },
+    })
+
+
 # ── Init & Run ─────────────────────────────────────────────────────
 
 with app.app_context():
