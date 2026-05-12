@@ -77,7 +77,13 @@ from flask import (
 import tempfile
 from dotenv import load_dotenv
 from embriao_pdf import parse_fivet_pdf
-from pecia_pdf import gerar_pdf_estoque_touros, gerar_pdf_estoque_embrioes
+from pecia_pdf import (
+    gerar_pdf_estoque_touros,
+    gerar_pdf_estoque_embrioes,
+    gerar_pdf_ranking_indice,
+    gerar_pdf_ficha_animal,
+    gerar_pdf_panorama_rebanho,
+)
 
 load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env'), override=True)
 
@@ -3825,13 +3831,16 @@ PECIA_TOOLS = [
     },
     {
         "name": "gerar_relatorio_pdf",
-        "description": "Gera um relatório em PDF e retorna a URL para download (não envia arquivo no chat — o link aparece como anexo). Use sempre que o usuário pedir 'PDF', 'relatório', 'exportar', 'baixar', 'imprimir'. Tipos disponíveis: 'estoque_touros' (touros à venda, paisagem) ou 'estoque_embrioes' (lotes FIV, retrato). Filtros são opcionais.",
+        "description": "Gera um relatório em PDF e retorna a URL para download (não envia arquivo no chat — o link aparece como anexo). Use sempre que o usuário pedir 'PDF', 'relatório', 'exportar', 'baixar', 'imprimir'. Tipos: 'estoque_touros' (touros à venda, paisagem), 'estoque_embrioes' (lotes FIV, retrato), 'ranking_indice' (top N animais por um índice), 'ficha_animal' (ficha detalhada de um animal — exige brinco), 'panorama_rebanho' (visão geral da rodada atual). Use apenas os filtros aplicáveis ao tipo escolhido.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "tipo": {
                     "type": "string",
-                    "enum": ["estoque_touros", "estoque_embrioes"],
+                    "enum": [
+                        "estoque_touros", "estoque_embrioes",
+                        "ranking_indice", "ficha_animal", "panorama_rebanho"
+                    ],
                     "description": "Tipo do relatório."
                 },
                 "apenas_disponiveis": {
@@ -3849,6 +3858,29 @@ PECIA_TOOLS = [
                 "filtro_touro": {
                     "type": "string",
                     "description": "Só para estoque_embrioes: filtra por touro (busca parcial)."
+                },
+                "brinco": {
+                    "type": "string",
+                    "description": "Só para ficha_animal: brinco/ID do animal (obrigatório nesse tipo)."
+                },
+                "indice": {
+                    "type": "string",
+                    "enum": ["iciagen", "idesm", "rmat", "ifrig", "iep", "ipp"],
+                    "description": "Só para ranking_indice: qual índice ranquear."
+                },
+                "categoria": {
+                    "type": "string",
+                    "enum": ["M", "N", "TODAS"],
+                    "description": "Só para ranking_indice: M=Matriz, N=Novilha, TODAS=ambas. Default TODAS."
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Só para ranking_indice: quantos animais. Default 20, máximo 100."
+                },
+                "ordem": {
+                    "type": "string",
+                    "enum": ["melhores", "piores"],
+                    "description": "Só para ranking_indice: 'melhores' (default) ou 'piores'."
                 }
             },
             "required": ["tipo"]
@@ -4180,6 +4212,23 @@ def _pecia_execute_tool(db, name, args):
                     doadora=args.get('filtro_doadora'),
                     touro=args.get('filtro_touro'),
                     apenas_disponiveis=apenas_disp,
+                )
+            if tipo == 'ranking_indice':
+                return gerar_pdf_ranking_indice(
+                    db, REPORTS_DIR, logo_path,
+                    indice=args.get('indice') or 'iciagen',
+                    categoria=args.get('categoria') or 'TODAS',
+                    limit=args.get('limit') or 20,
+                    ordem=args.get('ordem') or 'melhores',
+                )
+            if tipo == 'ficha_animal':
+                return gerar_pdf_ficha_animal(
+                    db, REPORTS_DIR, logo_path,
+                    brinco=args.get('brinco'),
+                )
+            if tipo == 'panorama_rebanho':
+                return gerar_pdf_panorama_rebanho(
+                    db, REPORTS_DIR, logo_path,
                 )
             return {"erro": f"Tipo de relatório não suportado: {tipo}"}
         return {"erro": f"Ferramenta desconhecida: {name}"}

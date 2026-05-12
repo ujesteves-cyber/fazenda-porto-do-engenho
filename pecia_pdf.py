@@ -98,6 +98,41 @@ def _styles():
     return title, sub
 
 
+def _section_style():
+    base = getSampleStyleSheet()
+    return ParagraphStyle(
+        'PecIASection', parent=base['Heading2'],
+        fontSize=10.5, textColor=BRAND_BORDO,
+        spaceBefore=14, spaceAfter=6, fontName='Helvetica-Bold'
+    )
+
+
+def _kv_table_style():
+    """Tabela chave/valor — sem cabeçalho bordô, com zebra."""
+    return TableStyle([
+        ('FONTSIZE', (0, 0), (-1, -1), 9),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('TOPPADDING', (0, 0), (-1, -1), 5),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+        ('LEFTPADDING', (0, 0), (-1, -1), 6),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 6),
+        ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
+        ('FONTNAME', (2, 0), (2, -1), 'Helvetica-Bold'),
+        ('TEXTCOLOR', (0, 0), (0, -1), GRAY_MUTED),
+        ('TEXTCOLOR', (2, 0), (2, -1), GRAY_MUTED),
+        ('FONTSIZE', (0, 0), (0, -1), 8),
+        ('FONTSIZE', (2, 0), (2, -1), 8),
+        ('ROWBACKGROUNDS', (0, 0), (-1, -1), [colors.white, GRAY_ZEBRA]),
+        ('BOX', (0, 0), (-1, -1), 0.25, GRAY_LINE),
+    ])
+
+
+def _ultima_rodada(db):
+    return db.execute(
+        "SELECT id, nome FROM rodadas ORDER BY data_import DESC LIMIT 1"
+    ).fetchone()
+
+
 def _build_doc(pdf_path, pagesize):
     return SimpleDocTemplate(
         pdf_path, pagesize=pagesize,
@@ -260,4 +295,376 @@ def gerar_pdf_estoque_embrioes(db, reports_dir, logo_path,
         'size_kb': round(size_bytes / 1024, 1),
         'total_itens': len(rows),
         'tipo': 'estoque_embrioes',
+    }
+
+
+def gerar_pdf_ranking_indice(db, reports_dir, logo_path,
+                              indice='iciagen', categoria='TODAS',
+                              limit=20, ordem='melhores'):
+    rodada = _ultima_rodada(db)
+    if not rodada:
+        return {"erro": "Nenhuma rodada importada"}
+    rid = rodada['id']
+
+    indices_avaliacoes = {'iciagen', 'idesm', 'rmat', 'ifrig'}
+    indices_matrizes = {'iep', 'ipp'}
+    if indice not in indices_avaliacoes and indice not in indices_matrizes:
+        return {"erro": f"Índice '{indice}' não suportado"}
+
+    melhor_eh_menor = indice in {'iep', 'ipp'}
+    direcao = 'ASC' if ((ordem == 'melhores') == melhor_eh_menor) else 'DESC'
+
+    try:
+        limit = max(1, min(int(limit or 20), 100))
+    except (TypeError, ValueError):
+        limit = 20
+
+    cat_filter = ''
+    params = [rid]
+    if categoria and categoria != 'TODAS':
+        cat_filter = " AND m.categoria = ?"
+        params.append(categoria)
+
+    if indice in indices_avaliacoes:
+        sql = f"""
+            SELECT m.animal_id, m.categoria, a.{indice} AS valor,
+                   a.iciagen, m.touro_pai, m.mae_id
+            FROM matrizes m
+            JOIN avaliacoes a ON a.animal_id=m.animal_id AND a.rodada_id=m.rodada_id
+            WHERE m.rodada_id=? AND m.ativo=1 AND a.{indice} IS NOT NULL{cat_filter}
+            ORDER BY a.{indice} {direcao} LIMIT ?
+        """
+    else:
+        sql = f"""
+            SELECT m.animal_id, m.categoria, m.{indice} AS valor,
+                   a.iciagen, m.touro_pai, m.mae_id
+            FROM matrizes m
+            LEFT JOIN avaliacoes a ON a.animal_id=m.animal_id AND a.rodada_id=m.rodada_id
+            WHERE m.rodada_id=? AND m.ativo=1 AND m.{indice} IS NOT NULL{cat_filter}
+            ORDER BY m.{indice} {direcao} LIMIT ?
+        """
+    params.append(limit)
+    rows = db.execute(sql, params).fetchall()
+
+    os.makedirs(reports_dir, exist_ok=True)
+    ts = datetime.now().strftime('%Y-%m-%d_%Hh%M')
+    filename = f'ranking-{indice}_{ordem}_{ts}.pdf'
+    pdf_path = os.path.join(reports_dir, filename)
+
+    doc = _build_doc(pdf_path, A4)
+    title_style, sub_style = _styles()
+    story = []
+
+    indice_label = {
+        'iciagen': 'ICIAGen', 'idesm': 'IDESM', 'rmat': 'RMAT',
+        'ifrig': 'IFRIG', 'iep': 'IEP', 'ipp': 'IPP'
+    }.get(indice, indice.upper())
+    cat_label = {
+        'M': 'Matrizes (M)', 'N': 'Novilhas (N)',
+        'TODAS': 'Matrizes + Novilhas'
+    }.get(categoria, 'Todas')
+    ordem_label = 'Melhores' if ordem == 'melhores' else 'Piores'
+    story.append(Paragraph(
+        f'Ranking — {ordem_label} {len(rows)} por {indice_label}', title_style
+    ))
+    story.append(Paragraph(
+        f"Rodada: {rodada['nome']}  |  Categoria: {cat_label}", sub_style
+    ))
+
+    if not rows:
+        story.append(Paragraph(
+            'Nenhum animal encontrado para os filtros aplicados.', sub_style
+        ))
+    else:
+        header = ['Pos', 'Brinco', 'Categ', indice_label, 'ICIAGen', 'Pai', 'Mãe']
+        data = [header]
+        casas = 2 if indice in indices_avaliacoes else 1
+        for i, r in enumerate(rows, 1):
+            data.append([
+                str(i),
+                r['animal_id'] or '-',
+                r['categoria'] or '-',
+                _fmt(r['valor'], casas),
+                _fmt(r['iciagen']),
+                (r['touro_pai'] or '-')[:14],
+                (r['mae_id'] or '-')[:14],
+            ])
+        col_widths = [1.2 * cm, 2.8 * cm, 1.6 * cm, 2.2 * cm,
+                      2.2 * cm, 3.2 * cm, 3.2 * cm]
+        t = Table(data, colWidths=col_widths, repeatRows=1)
+        t.setStyle(_table_style())
+        story.append(t)
+
+    chrome = _draw_chrome(logo_path)
+    doc.build(story, onFirstPage=chrome, onLaterPages=chrome)
+
+    size_bytes = os.path.getsize(pdf_path)
+    return {
+        'pdf_url': f'/relatorios/{filename}',
+        'filename': filename,
+        'size_kb': round(size_bytes / 1024, 1),
+        'total_itens': len(rows),
+        'tipo': 'ranking_indice',
+    }
+
+
+def gerar_pdf_ficha_animal(db, reports_dir, logo_path, brinco):
+    brinco = (brinco or '').strip()
+    if not brinco:
+        return {"erro": "Brinco obrigatório"}
+    rodada = _ultima_rodada(db)
+    if not rodada:
+        return {"erro": "Nenhuma rodada importada"}
+    rid = rodada['id']
+
+    m = db.execute("""
+        SELECT m.animal_id, m.data_nasc, m.touro_pai, m.mae_id, m.avo_paterno, m.avo_materno,
+               m.categoria, m.genotipada, m.precoce, m.ceip, m.ipp, m.iep, m.pv, m.desc_ap,
+               a.iciagen, a.deca_icia_g, a.idesm, a.deca_idesm_g, a.rmat, a.deca_rmat, a.ifrig
+        FROM matrizes m
+        LEFT JOIN avaliacoes a ON a.animal_id=m.animal_id AND a.rodada_id=m.rodada_id
+        WHERE m.animal_id = ? AND m.rodada_id = ? AND m.ativo = 1
+    """, (brinco, rid)).fetchone()
+
+    t_row = None
+    p_row = None
+    where_found = None
+    sexo = '-'
+    categoria_label = '-'
+    animal_data = {}
+
+    if m:
+        where_found = 'Matriz Ativa'
+        sexo = 'Fêmea'
+        categoria_label = {'M': 'Matriz', 'N': 'Novilha'}.get(m['categoria'], m['categoria'] or '-')
+        animal_data = dict(m)
+    else:
+        t_row = db.execute("""
+            SELECT et.brinco, et.data_nasc, et.pai, et.avo_paterno, et.avo_materno,
+                   et.idesm, et.iciagen, et.rmat, et.ifrig, et.peso, et.vendido,
+                   eg.nome AS grupo
+            FROM estoque_touros et
+            LEFT JOIN estoque_grupos eg ON eg.id = et.grupo_id
+            WHERE et.brinco = ?
+        """, (brinco,)).fetchone()
+        if t_row:
+            where_found = 'Estoque de Venda — ' + ('Vendido' if t_row['vendido'] else 'Disponível')
+            sexo = 'Macho'
+            categoria_label = 'Touro (estoque comercial)'
+            animal_data = dict(t_row)
+        else:
+            p_row = db.execute("""
+                SELECT produto_id, mae_id, touro, sexo, data_nasc, pn, peso_desm,
+                       idesm, iciagen, rmat
+                FROM produtos WHERE produto_id = ? AND rodada_id = ?
+            """, (brinco, rid)).fetchone()
+            if p_row:
+                where_found = 'Produto / Cria'
+                sexo = {'M': 'Macho', 'F': 'Fêmea'}.get(p_row['sexo'], p_row['sexo'] or '-')
+                categoria_label = 'Produto / Cria de safra'
+                animal_data = dict(p_row)
+            else:
+                return {"erro": f"Animal '{brinco}' não encontrado em matrizes, estoque ou produtos."}
+
+    os.makedirs(reports_dir, exist_ok=True)
+    ts = datetime.now().strftime('%Y-%m-%d_%Hh%M')
+    safe_brinco = brinco.replace(' ', '-').replace('/', '-')
+    filename = f'ficha-animal_{safe_brinco}_{ts}.pdf'
+    pdf_path = os.path.join(reports_dir, filename)
+
+    doc = _build_doc(pdf_path, A4)
+    title_style, sub_style = _styles()
+    section_style = _section_style()
+    story = [
+        Paragraph(f'Ficha do Animal — {brinco}', title_style),
+        Paragraph(where_found, sub_style),
+        Paragraph('Identificação', section_style),
+    ]
+
+    ident_data = [
+        ['Brinco', animal_data.get('animal_id') or animal_data.get('brinco') or animal_data.get('produto_id') or brinco,
+         'Sexo', sexo],
+        ['Categoria', categoria_label,
+         'Data Nascimento', animal_data.get('data_nasc') or '-'],
+    ]
+    if m:
+        ident_data.append([
+            'Peso Vivo',
+            (_fmt(animal_data.get('pv'), 1) + ' kg') if animal_data.get('pv') else '-',
+            'Genotipada', 'Sim' if animal_data.get('genotipada') else 'Não'
+        ])
+    elif t_row:
+        ident_data.append([
+            'Peso',
+            (_fmt(animal_data.get('peso'), 1) + ' kg') if animal_data.get('peso') else '-',
+            'Grupo/Safra', animal_data.get('grupo') or '-'
+        ])
+    ident_tbl = Table(ident_data, colWidths=[3.5 * cm, 5.5 * cm, 3.5 * cm, 5.5 * cm])
+    ident_tbl.setStyle(_kv_table_style())
+    story.append(ident_tbl)
+
+    story.append(Paragraph('Genealogia', section_style))
+    pai_key = 'touro_pai' if m else ('pai' if t_row else 'touro')
+    geneal_data = [
+        ['Pai', animal_data.get(pai_key) or '-',
+         'Mãe', animal_data.get('mae_id') or '-'],
+    ]
+    if m or t_row:
+        geneal_data.append([
+            'Avô Paterno', animal_data.get('avo_paterno') or '-',
+            'Avô Materno', animal_data.get('avo_materno') or '-'
+        ])
+    geneal_tbl = Table(geneal_data, colWidths=[3.5 * cm, 5.5 * cm, 3.5 * cm, 5.5 * cm])
+    geneal_tbl.setStyle(_kv_table_style())
+    story.append(geneal_tbl)
+
+    has_indices = any(animal_data.get(k) is not None
+                      for k in ('iciagen', 'idesm', 'rmat', 'ifrig'))
+    if has_indices:
+        story.append(Paragraph('Índices Genéticos', section_style))
+        idx_data = [['Índice', 'Valor', 'DECA']]
+        idx_rows = [
+            ('ICIAGen', animal_data.get('iciagen'),
+             animal_data.get('deca_icia_g') if m else None),
+            ('IDESM', animal_data.get('idesm'),
+             animal_data.get('deca_idesm_g') if m else None),
+            ('RMAT', animal_data.get('rmat'),
+             animal_data.get('deca_rmat') if m else None),
+            ('IFRIG', animal_data.get('ifrig') if (m or t_row) else None, None),
+        ]
+        for label, valor, deca in idx_rows:
+            if valor is not None:
+                idx_data.append([label, _fmt(valor), str(deca) if deca else '-'])
+        if len(idx_data) > 1:
+            idx_tbl = Table(idx_data, colWidths=[5 * cm, 4 * cm, 4 * cm])
+            idx_tbl.setStyle(_table_style())
+            story.append(idx_tbl)
+
+    if m:
+        story.append(Paragraph('Reprodução', section_style))
+        repro_data = [
+            ['IPP',
+             (_fmt(animal_data.get('ipp'), 1) + ' meses') if animal_data.get('ipp') else '-',
+             'IEP',
+             (_fmt(animal_data.get('iep'), 1) + ' meses') if animal_data.get('iep') else '-'],
+            ['CEIP', 'Sim' if animal_data.get('ceip') else 'Não',
+             'Precoce', 'Sim' if animal_data.get('precoce') else 'Não'],
+        ]
+        repro_tbl = Table(repro_data, colWidths=[3.5 * cm, 5.5 * cm, 3.5 * cm, 5.5 * cm])
+        repro_tbl.setStyle(_kv_table_style())
+        story.append(repro_tbl)
+
+    if m and animal_data.get('desc_ap'):
+        story.append(Paragraph('Observações — Aprumos', section_style))
+        story.append(Paragraph(str(animal_data['desc_ap']), sub_style))
+
+    chrome = _draw_chrome(logo_path)
+    doc.build(story, onFirstPage=chrome, onLaterPages=chrome)
+
+    size_bytes = os.path.getsize(pdf_path)
+    return {
+        'pdf_url': f'/relatorios/{filename}',
+        'filename': filename,
+        'size_kb': round(size_bytes / 1024, 1),
+        'total_itens': 1,
+        'tipo': 'ficha_animal',
+    }
+
+
+def gerar_pdf_panorama_rebanho(db, reports_dir, logo_path):
+    rodada = _ultima_rodada(db)
+    if not rodada:
+        return {"erro": "Nenhuma rodada importada"}
+    rid = rodada['id']
+
+    kpis = db.execute("""
+        SELECT COUNT(*) AS total_matrizes,
+               AVG(a.iciagen) AS iciagen_avg,
+               AVG(a.idesm) AS idesm_avg,
+               AVG(a.rmat) AS rmat_avg,
+               AVG(m.ipp) AS ipp_avg,
+               AVG(m.iep) AS iep_avg,
+               SUM(m.ceip) AS ceip_total,
+               SUM(m.genotipada) AS genotipadas,
+               SUM(m.precoce) AS precoces
+        FROM matrizes m
+        LEFT JOIN avaliacoes a ON a.animal_id=m.animal_id AND a.rodada_id=m.rodada_id
+        WHERE m.rodada_id=? AND m.ativo=1
+    """, (rid,)).fetchone()
+    cats = db.execute("""
+        SELECT categoria, COUNT(*) AS n FROM matrizes
+        WHERE rodada_id=? AND ativo=1 GROUP BY categoria
+    """, (rid,)).fetchall()
+    emb = db.execute("""
+        SELECT COUNT(*) AS n_lotes, COALESCE(SUM(qtd_atual),0) AS total
+        FROM embriao_lote WHERE qtd_atual>0
+    """).fetchone()
+    estoque_t = db.execute(
+        "SELECT COUNT(*) AS n FROM estoque_touros WHERE vendido=0"
+    ).fetchone()
+
+    os.makedirs(reports_dir, exist_ok=True)
+    ts = datetime.now().strftime('%Y-%m-%d_%Hh%M')
+    filename = f'panorama-rebanho_{ts}.pdf'
+    pdf_path = os.path.join(reports_dir, filename)
+
+    doc = _build_doc(pdf_path, A4)
+    title_style, sub_style = _styles()
+    section_style = _section_style()
+    story = [
+        Paragraph(f'Panorama do Rebanho — {rodada["nome"]}', title_style),
+        Paragraph('Snapshot da rodada mais recente importada.', sub_style),
+        Paragraph('Plantel', section_style),
+    ]
+
+    matrizes_n = next((r['n'] for r in cats if r['categoria'] == 'M'), 0)
+    novilhas_n = next((r['n'] for r in cats if r['categoria'] == 'N'), 0)
+    plantel_data = [
+        ['Matrizes ativas', str(kpis['total_matrizes'] or 0),
+         'Categoria M', str(matrizes_n)],
+        ['Categoria N (novilhas)', str(novilhas_n),
+         'Com CEIP', str(kpis['ceip_total'] or 0)],
+        ['Genotipadas', str(kpis['genotipadas'] or 0),
+         'Precoces', str(kpis['precoces'] or 0)],
+    ]
+    plantel_tbl = Table(plantel_data, colWidths=[4.5 * cm, 4 * cm, 4.5 * cm, 4 * cm])
+    plantel_tbl.setStyle(_kv_table_style())
+    story.append(plantel_tbl)
+
+    story.append(Paragraph('Índices Médios', section_style))
+    idx_data = [['Índice', 'Valor médio']]
+    idx_rows = [
+        ('ICIAGen', kpis['iciagen_avg'], 2),
+        ('IDESM', kpis['idesm_avg'], 2),
+        ('RMAT', kpis['rmat_avg'], 2),
+        ('IPP (meses)', kpis['ipp_avg'], 1),
+        ('IEP (meses)', kpis['iep_avg'], 1),
+    ]
+    for label, valor, casas in idx_rows:
+        if valor is not None:
+            idx_data.append([label, _fmt(valor, casas)])
+    idx_tbl = Table(idx_data, colWidths=[8 * cm, 6 * cm])
+    idx_tbl.setStyle(_table_style())
+    story.append(idx_tbl)
+
+    story.append(Paragraph('Estoque', section_style))
+    estoque_data = [
+        ['Embriões disponíveis',
+         f"{emb['total']} embriões em {emb['n_lotes']} lotes"],
+        ['Touros à venda', f"{estoque_t['n']} disponíveis"],
+    ]
+    estoque_tbl = Table(estoque_data, colWidths=[5 * cm, 9 * cm])
+    estoque_tbl.setStyle(_kv_table_style())
+    story.append(estoque_tbl)
+
+    chrome = _draw_chrome(logo_path)
+    doc.build(story, onFirstPage=chrome, onLaterPages=chrome)
+
+    size_bytes = os.path.getsize(pdf_path)
+    return {
+        'pdf_url': f'/relatorios/{filename}',
+        'filename': filename,
+        'size_kb': round(size_bytes / 1024, 1),
+        'total_itens': kpis['total_matrizes'] or 0,
+        'tipo': 'panorama_rebanho',
     }
