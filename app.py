@@ -3805,8 +3805,11 @@ def api_embrioes_reconciliar_preview():
     novos, sumidos, divergentes = [], [], []
     db_keys = set()
     for r in db_rows:
-        k = (r['dt_opu'] or '', r['dt_vitrificacao'] or '',
-             r['doadora'], r['touro'], r['tipo_semen'])
+        k = ((r['dt_opu'] or '').strip(),
+             (r['dt_vitrificacao'] or '').strip(),
+             (r['doadora'] or '').strip(),
+             (r['touro'] or '').strip().upper(),
+             r['tipo_semen'])
         db_keys.add(k)
         if k in pdf_map:
             if pdf_map[k] != r['qtd_atual']:
@@ -3853,8 +3856,13 @@ def api_embrioes_reconciliar_aplicar():
     db.execute('BEGIN')
     aplicados = 0
     try:
+        # Note: `novos` entries from preview (lotes in PDF but not in DB) cannot
+        # be applied here — they have no lote_id. Use /api/embrioes/importar/confirmar
+        # to insert new lotes from the PDF.
         for adj in ajustes:
             lote_id = adj.get('lote_id')
+            if not lote_id:
+                continue
             try:
                 diff = int(adj.get('diferenca', 0))
             except (TypeError, ValueError):
