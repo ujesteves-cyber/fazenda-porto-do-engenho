@@ -3938,6 +3938,487 @@ def api_embrioes_relink():
     return jsonify({'ok': True, 'atualizados': atualizados})
 
 
+# ── PecIA: Chat conversacional com Claude (tool use, read-only) ────
+
+PECIA_SYSTEM_PROMPT = """Você é o PecIA, assistente de pecuária da Fazenda Porto do Engenho — cabanha de Nelore Provado em Cariacica-ES (CIA de Melhoramento). Responde perguntas sobre o rebanho consultando o banco de dados via ferramentas.
+
+CONTEXTO DO REBANHO:
+- Sistema de melhoramento genético baseado em rodadas de avaliação importadas periodicamente. Os dados refletem a rodada mais recente.
+- Índices principais (quanto MAIOR melhor): ICIAGen (mérito genético geral), IDESM (índice desmama), RMAT (mérito reprodutivo), IFRIG (índice frigorífico).
+- IPP (Idade ao Primeiro Parto) e IEP (Intervalo Entre Partos): em meses, quanto MENOR melhor.
+- DECA = decil dentro do rebanho. DECA 1 = top 10% (excelente), DECA 10 = pior 10% (candidato a descarte).
+- Categorias: M=Matriz (já pariu), N=Novilha. CEIP=Certificado de Eficiência Produtiva (PMGRN-Embrapa).
+- Estoque FIV: lotes de embriões por combinação doadora×touro, com qtd_atual disponível.
+- Estoque de touros para venda: machos no inventário comercial, agrupados por safra.
+
+REGRAS:
+1. SEMPRE use as ferramentas para responder qualquer pergunta factual sobre animais, índices ou estoque. NUNCA invente brincos, números ou dados.
+2. Se uma ferramenta retornar vazio/não encontrado, diga ao usuário que não achou — não chute.
+3. Brincos podem ter formatos variados (ex: "0001", "54 KO11", "BRA12345"). Passe exatamente como o usuário digitou.
+4. Seja objetivo. Listas de animais: use tabela com 3-5 colunas essenciais.
+5. Quando o usuário pedir "as melhores" sem dizer qual índice, assuma ICIAGen.
+6. Você é READ-ONLY. Se pedirem alteração de dados, oriente onde fazer pelo próprio sistema.
+7. Use português brasileiro objetivo, sem jargão excessivo."""
+
+
+PECIA_TOOLS = [
+    {
+        "name": "consultar_animal",
+        "description": "Ficha completa de um animal pelo brinco/ID: sexo, categoria (M=matriz/N=novilha), pai, mãe, avós, data de nascimento, índices (ICIAGen, IDESM, RMAT, IFRIG), DECAs, IPP, IEP, CEIP, status de genotipagem, e onde está cadastrado (matriz ativa, estoque de venda, ou produto/cria). Use sempre que o usuário perguntar sobre um animal específico.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "brinco": {"type": "string", "description": "Brinco/ID do animal exatamente como o usuário digitou"}
+            },
+            "required": ["brinco"]
+        }
+    },
+    {
+        "name": "genealogia",
+        "description": "Genealogia de um animal: pai (touro), mãe, avós paterno e materno, e lista de filhos (cruzando matrizes onde touro_pai/mae_id = brinco, e produtos onde touro/mae_id = brinco). Use para 'quem é filho de X?', 'pais de Y?', 'quantos filhos X tem?'.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "brinco": {"type": "string", "description": "Brinco do animal"}
+            },
+            "required": ["brinco"]
+        }
+    },
+    {
+        "name": "top_animais_por_indice",
+        "description": "Ranking dos N melhores (ou piores) animais por um índice genético. Use para 'top 10 ICIAGen', 'minhas melhores vacas', 'piores IEP', 'novilhas com melhor IDESM'. A função já considera qual direção (maior ou menor) é 'melhor' para cada índice.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "indice": {"type": "string", "enum": ["iciagen", "idesm", "rmat", "ifrig", "iep", "ipp"], "description": "Índice a ranquear"},
+                "categoria": {"type": "string", "enum": ["M", "N", "TODAS"], "description": "M=Matriz, N=Novilha, TODAS=ambas. Default: TODAS."},
+                "limit": {"type": "integer", "description": "Quantos retornar. Default 10, máximo 50."},
+                "ordem": {"type": "string", "enum": ["melhores", "piores"], "description": "Default 'melhores'."}
+            },
+            "required": ["indice"]
+        }
+    },
+    {
+        "name": "estoque_embrioes",
+        "description": "Lista lotes de embriões FIV no estoque. Filtre por doadora (vaca de origem) e/ou touro. Retorna doadora, touro, qtd_atual, qtd_inicial, datas de OPU/vitrificação, laboratório. Use para 'quanto embrião eu tenho?', 'embrião da vaca X', 'embrião do touro Y'.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "doadora": {"type": "string", "description": "Filtrar por doadora (busca parcial). Opcional."},
+                "touro": {"type": "string", "description": "Filtrar por touro (busca parcial). Opcional."},
+                "apenas_disponiveis": {"type": "boolean", "description": "Default true: só retorna lotes com qtd_atual>0."}
+            }
+        }
+    },
+    {
+        "name": "estoque_touros_venda",
+        "description": "Lista touros do estoque comercial para venda. Mostra brinco, índices (ICIAGen, IDESM, RMAT, IFRIG), peso, pai, grupo/safra e status (vendido/disponível). Use para 'touros pra vender', 'estoque safra X', 'melhores touros disponíveis'.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "grupo": {"type": "string", "description": "Nome do grupo/safra. Opcional."},
+                "apenas_disponiveis": {"type": "boolean", "description": "Default true: só não vendidos."}
+            }
+        }
+    },
+    {
+        "name": "resumo_rebanho",
+        "description": "Visão geral do rebanho na rodada mais recente: total de matrizes ativas, médias de ICIAGen/IDESM/RMAT/IPP/IEP, distribuição por categoria, totais de CEIP/genotipadas/precoces, estoque de embriões e touros à venda. Use para 'panorama geral', 'como tá meu rebanho?', 'quantas matrizes eu tenho?'.",
+        "input_schema": {"type": "object", "properties": {}}
+    }
+]
+
+
+def _pecia_tool_consultar_animal(db, brinco):
+    brinco = (brinco or '').strip()
+    if not brinco:
+        return {"erro": "Brinco vazio"}
+    rodada = get_ultima_rodada(db)
+    if not rodada:
+        return {"erro": "Nenhuma rodada importada"}
+    rid = rodada['id']
+
+    m = db.execute("""
+        SELECT m.animal_id, m.data_nasc, m.touro_pai, m.mae_id, m.avo_paterno, m.avo_materno,
+               m.categoria, m.genotipada, m.precoce, m.ceip, m.ipp, m.iep, m.pv, m.desc_ap,
+               a.iciagen, a.deca_icia_g, a.idesm, a.deca_idesm_g, a.rmat, a.deca_rmat, a.ifrig
+        FROM matrizes m
+        LEFT JOIN avaliacoes a ON a.animal_id=m.animal_id AND a.rodada_id=m.rodada_id
+        WHERE m.animal_id = ? AND m.rodada_id = ? AND m.ativo = 1
+    """, (brinco, rid)).fetchone()
+    if m:
+        return {
+            "encontrado_em": "matriz_ativa",
+            "brinco": m['animal_id'], "sexo": "F", "categoria": m['categoria'],
+            "data_nascimento": m['data_nasc'],
+            "pai": m['touro_pai'], "mae": m['mae_id'],
+            "avo_paterno": m['avo_paterno'], "avo_materno": m['avo_materno'],
+            "iciagen": m['iciagen'], "deca_iciagen": m['deca_icia_g'],
+            "idesm": m['idesm'], "deca_idesm": m['deca_idesm_g'],
+            "rmat": m['rmat'], "deca_rmat": m['deca_rmat'], "ifrig": m['ifrig'],
+            "ipp_meses": m['ipp'], "iep_meses": m['iep'], "peso_vivo": m['pv'],
+            "genotipada": bool(m['genotipada']), "precoce": bool(m['precoce']),
+            "ceip": bool(m['ceip']), "obs_aprumos": m['desc_ap']
+        }
+
+    t = db.execute("""
+        SELECT et.brinco, et.data_nasc, et.pai, et.avo_paterno, et.avo_materno,
+               et.idesm, et.iciagen, et.rmat, et.ifrig, et.peso, et.vendido,
+               eg.nome AS grupo
+        FROM estoque_touros et
+        LEFT JOIN estoque_grupos eg ON eg.id = et.grupo_id
+        WHERE et.brinco = ?
+    """, (brinco,)).fetchone()
+    if t:
+        return {
+            "encontrado_em": "estoque_venda",
+            "brinco": t['brinco'], "sexo": "M",
+            "data_nascimento": t['data_nasc'], "pai": t['pai'],
+            "avo_paterno": t['avo_paterno'], "avo_materno": t['avo_materno'],
+            "iciagen": t['iciagen'], "idesm": t['idesm'],
+            "rmat": t['rmat'], "ifrig": t['ifrig'],
+            "peso_kg": t['peso'], "grupo_safra": t['grupo'],
+            "vendido": bool(t['vendido'])
+        }
+
+    p = db.execute("""
+        SELECT produto_id, mae_id, touro, sexo, data_nasc, pn, peso_desm,
+               idesm, iciagen, rmat
+        FROM produtos WHERE produto_id = ? AND rodada_id = ?
+    """, (brinco, rid)).fetchone()
+    if p:
+        return {
+            "encontrado_em": "produto_safra",
+            "brinco": p['produto_id'], "sexo": p['sexo'],
+            "data_nascimento": p['data_nasc'], "pai": p['touro'], "mae": p['mae_id'],
+            "iciagen": p['iciagen'], "idesm": p['idesm'], "rmat": p['rmat'],
+            "peso_nascimento": p['pn'], "peso_desmama": p['peso_desm']
+        }
+
+    return {"encontrado": False, "brinco_buscado": brinco,
+            "mensagem": "Não encontrado em matrizes ativas, estoque de venda nem produtos da rodada atual."}
+
+
+def _pecia_tool_genealogia(db, brinco):
+    brinco = (brinco or '').strip()
+    if not brinco:
+        return {"erro": "Brinco vazio"}
+    rodada = get_ultima_rodada(db)
+    if not rodada:
+        return {"erro": "Nenhuma rodada importada"}
+    rid = rodada['id']
+
+    out = {"brinco": brinco, "pais": None}
+
+    m = db.execute("""
+        SELECT touro_pai, mae_id, avo_paterno, avo_materno
+        FROM matrizes WHERE animal_id=? AND rodada_id=? AND ativo=1
+    """, (brinco, rid)).fetchone()
+    if m:
+        out["pais"] = {"pai": m['touro_pai'], "mae": m['mae_id'],
+                       "avo_paterno": m['avo_paterno'], "avo_materno": m['avo_materno']}
+
+    filhos_pai_mat = db.execute("""
+        SELECT animal_id, categoria FROM matrizes
+        WHERE touro_pai=? AND rodada_id=? AND ativo=1
+        ORDER BY animal_id LIMIT 100
+    """, (brinco, rid)).fetchall()
+    filhos_pai_prod = db.execute("""
+        SELECT produto_id, sexo FROM produtos
+        WHERE touro=? AND rodada_id=?
+        ORDER BY produto_id LIMIT 100
+    """, (brinco, rid)).fetchall()
+    out["filhos_como_pai"] = (
+        [{"brinco": r['animal_id'], "categoria": r['categoria'], "tabela": "matrizes"} for r in filhos_pai_mat]
+        + [{"brinco": r['produto_id'], "sexo": r['sexo'], "tabela": "produtos"} for r in filhos_pai_prod]
+    )
+
+    filhos_mae_mat = db.execute("""
+        SELECT animal_id, categoria FROM matrizes
+        WHERE mae_id=? AND rodada_id=? AND ativo=1
+        ORDER BY animal_id LIMIT 100
+    """, (brinco, rid)).fetchall()
+    filhos_mae_prod = db.execute("""
+        SELECT produto_id, sexo FROM produtos
+        WHERE mae_id=? AND rodada_id=?
+        ORDER BY produto_id LIMIT 100
+    """, (brinco, rid)).fetchall()
+    out["filhos_como_mae"] = (
+        [{"brinco": r['animal_id'], "categoria": r['categoria'], "tabela": "matrizes"} for r in filhos_mae_mat]
+        + [{"brinco": r['produto_id'], "sexo": r['sexo'], "tabela": "produtos"} for r in filhos_mae_prod]
+    )
+
+    out["total_filhos_como_pai"] = len(out["filhos_como_pai"])
+    out["total_filhos_como_mae"] = len(out["filhos_como_mae"])
+
+    if not out["pais"] and not out["filhos_como_pai"] and not out["filhos_como_mae"]:
+        return {"encontrado": False, "brinco_buscado": brinco}
+    return out
+
+
+def _pecia_tool_top_indice(db, indice, categoria='TODAS', limit=10, ordem='melhores'):
+    rodada = get_ultima_rodada(db)
+    if not rodada:
+        return {"erro": "Nenhuma rodada importada"}
+    rid = rodada['id']
+
+    indices_avaliacoes = {'iciagen', 'idesm', 'rmat', 'ifrig'}
+    indices_matrizes = {'iep', 'ipp'}
+    if indice not in indices_avaliacoes and indice not in indices_matrizes:
+        return {"erro": f"Índice '{indice}' não suportado"}
+
+    melhor_eh_menor = indice in {'iep', 'ipp'}
+    direcao = 'ASC' if ((ordem == 'melhores') == melhor_eh_menor) else 'DESC'
+
+    try:
+        limit = max(1, min(int(limit or 10), 50))
+    except (TypeError, ValueError):
+        limit = 10
+
+    cat_filter = ''
+    params = [rid]
+    if categoria and categoria != 'TODAS':
+        cat_filter = " AND m.categoria = ?"
+        params.append(categoria)
+
+    if indice in indices_avaliacoes:
+        sql = f"""
+            SELECT m.animal_id, m.categoria, a.{indice} AS valor,
+                   a.iciagen, m.touro_pai, m.mae_id
+            FROM matrizes m
+            JOIN avaliacoes a ON a.animal_id=m.animal_id AND a.rodada_id=m.rodada_id
+            WHERE m.rodada_id=? AND m.ativo=1 AND a.{indice} IS NOT NULL{cat_filter}
+            ORDER BY a.{indice} {direcao} LIMIT ?
+        """
+    else:
+        sql = f"""
+            SELECT m.animal_id, m.categoria, m.{indice} AS valor,
+                   a.iciagen, m.touro_pai, m.mae_id
+            FROM matrizes m
+            LEFT JOIN avaliacoes a ON a.animal_id=m.animal_id AND a.rodada_id=m.rodada_id
+            WHERE m.rodada_id=? AND m.ativo=1 AND m.{indice} IS NOT NULL{cat_filter}
+            ORDER BY m.{indice} {direcao} LIMIT ?
+        """
+    params.append(limit)
+    rows = db.execute(sql, params).fetchall()
+    return {
+        "indice": indice, "ordem": ordem, "categoria_filtro": categoria,
+        "total_retornado": len(rows),
+        "ranking": [dict(r) for r in rows]
+    }
+
+
+def _pecia_tool_estoque_embrioes(db, doadora=None, touro=None, apenas_disponiveis=True):
+    where = []
+    params = []
+    if doadora:
+        where.append("doadora LIKE ?")
+        params.append(f"%{doadora}%")
+    if touro:
+        where.append("touro LIKE ?")
+        params.append(f"%{touro}%")
+    if apenas_disponiveis:
+        where.append("qtd_atual > 0")
+    sql = ("SELECT id, dt_opu, dt_vitrificacao, doadora, touro, tipo_semen, "
+           "qtd_inicial, qtd_atual, lab FROM embriao_lote")
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY qtd_atual DESC, dt_vitrificacao DESC LIMIT 200"
+    rows = db.execute(sql, params).fetchall()
+    total_disp = sum((r['qtd_atual'] or 0) for r in rows)
+    return {
+        "total_lotes": len(rows),
+        "total_embrioes_disponiveis": total_disp,
+        "filtros": {"doadora": doadora, "touro": touro, "apenas_disponiveis": apenas_disponiveis},
+        "lotes": [dict(r) for r in rows]
+    }
+
+
+def _pecia_tool_estoque_touros_venda(db, grupo=None, apenas_disponiveis=True):
+    where = []
+    params = []
+    if grupo:
+        where.append("eg.nome LIKE ?")
+        params.append(f"%{grupo}%")
+    if apenas_disponiveis:
+        where.append("et.vendido = 0")
+    sql = """
+        SELECT et.brinco, eg.nome AS grupo, et.data_nasc, et.pai,
+               et.iciagen, et.idesm, et.rmat, et.ifrig, et.peso, et.vendido
+        FROM estoque_touros et
+        LEFT JOIN estoque_grupos eg ON eg.id = et.grupo_id
+    """
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY et.iciagen DESC NULLS LAST LIMIT 200"
+    rows = db.execute(sql, params).fetchall()
+    return {
+        "total": len(rows),
+        "filtros": {"grupo": grupo, "apenas_disponiveis": apenas_disponiveis},
+        "touros": [dict(r) for r in rows]
+    }
+
+
+def _pecia_tool_resumo_rebanho(db):
+    rodada = get_ultima_rodada(db)
+    if not rodada:
+        return {"erro": "Nenhuma rodada importada"}
+    rid = rodada['id']
+    kpis = db.execute("""
+        SELECT COUNT(*) AS total_matrizes,
+               AVG(a.iciagen) AS iciagen_avg,
+               AVG(a.idesm) AS idesm_avg,
+               AVG(a.rmat) AS rmat_avg,
+               AVG(m.ipp) AS ipp_avg,
+               AVG(m.iep) AS iep_avg,
+               SUM(m.ceip) AS ceip_total,
+               SUM(m.genotipada) AS genotipadas,
+               SUM(m.precoce) AS precoces
+        FROM matrizes m
+        LEFT JOIN avaliacoes a ON a.animal_id=m.animal_id AND a.rodada_id=m.rodada_id
+        WHERE m.rodada_id=? AND m.ativo=1
+    """, (rid,)).fetchone()
+    cats = db.execute("""
+        SELECT categoria, COUNT(*) AS n FROM matrizes
+        WHERE rodada_id=? AND ativo=1 GROUP BY categoria
+    """, (rid,)).fetchall()
+    emb = db.execute("""
+        SELECT COUNT(*) AS n_lotes, COALESCE(SUM(qtd_atual),0) AS total
+        FROM embriao_lote WHERE qtd_atual>0
+    """).fetchone()
+    estoque_t = db.execute(
+        "SELECT COUNT(*) AS n FROM estoque_touros WHERE vendido=0"
+    ).fetchone()
+    return {
+        "rodada": rodada['nome'],
+        "matrizes_ativas": kpis['total_matrizes'],
+        "iciagen_medio": round(kpis['iciagen_avg'] or 0, 2),
+        "idesm_medio": round(kpis['idesm_avg'] or 0, 2),
+        "rmat_medio": round(kpis['rmat_avg'] or 0, 2),
+        "ipp_medio_meses": round(kpis['ipp_avg'] or 0, 1) if kpis['ipp_avg'] else None,
+        "iep_medio_meses": round(kpis['iep_avg'] or 0, 1) if kpis['iep_avg'] else None,
+        "matrizes_com_ceip": kpis['ceip_total'] or 0,
+        "matrizes_genotipadas": kpis['genotipadas'] or 0,
+        "matrizes_precoces": kpis['precoces'] or 0,
+        "distribuicao_categoria": [dict(r) for r in cats],
+        "estoque_embrioes": {"lotes_com_saldo": emb['n_lotes'], "total_disponivel": emb['total']},
+        "estoque_touros_venda_disponiveis": estoque_t['n']
+    }
+
+
+def _pecia_execute_tool(db, name, args):
+    args = args or {}
+    try:
+        if name == "consultar_animal":
+            return _pecia_tool_consultar_animal(db, args.get('brinco'))
+        if name == "genealogia":
+            return _pecia_tool_genealogia(db, args.get('brinco'))
+        if name == "top_animais_por_indice":
+            return _pecia_tool_top_indice(
+                db,
+                args.get('indice'),
+                args.get('categoria') or 'TODAS',
+                args.get('limit') or 10,
+                args.get('ordem') or 'melhores'
+            )
+        if name == "estoque_embrioes":
+            return _pecia_tool_estoque_embrioes(
+                db,
+                args.get('doadora'),
+                args.get('touro'),
+                args.get('apenas_disponiveis', True)
+            )
+        if name == "estoque_touros_venda":
+            return _pecia_tool_estoque_touros_venda(
+                db,
+                args.get('grupo'),
+                args.get('apenas_disponiveis', True)
+            )
+        if name == "resumo_rebanho":
+            return _pecia_tool_resumo_rebanho(db)
+        return {"erro": f"Ferramenta desconhecida: {name}"}
+    except Exception as e:
+        return {"erro": f"Falha na ferramenta {name}: {str(e)}"}
+
+
+@app.route('/api/pecia/chat', methods=['POST'])
+@api_login_required
+def api_pecia_chat():
+    """Chat conversacional com Claude + tool use sobre o banco do rebanho (read-only)."""
+    body = request.get_json(silent=True) or {}
+    user_messages = body.get('messages') or []
+    if not isinstance(user_messages, list) or not user_messages:
+        return jsonify({'erro': 'Faltam messages no body'}), 400
+
+    convo = []
+    for m in user_messages:
+        role = m.get('role')
+        content = m.get('content')
+        if role not in ('user', 'assistant') or not isinstance(content, str):
+            continue
+        convo.append({"role": role, "content": content})
+    if not convo or convo[0]['role'] != 'user':
+        return jsonify({'erro': 'Primeira mensagem precisa ser do usuário'}), 400
+
+    api_key = os.getenv('ANTHROPIC_API_KEY')
+    if not api_key:
+        return jsonify({'erro': 'API key não configurada. Adicione ANTHROPIC_API_KEY ao .env'}), 500
+
+    db = get_db()
+    client = anthropic.Anthropic(api_key=api_key)
+
+    tools_with_cache = [dict(t) for t in PECIA_TOOLS]
+    tools_with_cache[-1] = {**tools_with_cache[-1], "cache_control": {"type": "ephemeral"}}
+
+    messages = list(convo)
+    MAX_LOOPS = 6
+    try:
+        for _ in range(MAX_LOOPS):
+            response = client.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=4096,
+                system=PECIA_SYSTEM_PROMPT,
+                tools=tools_with_cache,
+                messages=messages,
+            )
+
+            if response.stop_reason == "tool_use":
+                messages.append({"role": "assistant", "content": response.content})
+                tool_results = []
+                for block in response.content:
+                    if block.type == "tool_use":
+                        result = _pecia_execute_tool(db, block.name, block.input)
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": json.dumps(result, ensure_ascii=False, default=str)
+                        })
+                messages.append({"role": "user", "content": tool_results})
+                continue
+
+            final_text = next(
+                (b.text for b in response.content if b.type == "text"),
+                ""
+            )
+            return jsonify({
+                "reply": final_text or "(sem resposta)",
+                "stop_reason": response.stop_reason,
+                "usage": {
+                    "input_tokens": response.usage.input_tokens,
+                    "output_tokens": response.usage.output_tokens,
+                    "cache_read_input_tokens": getattr(response.usage, 'cache_read_input_tokens', 0),
+                    "cache_creation_input_tokens": getattr(response.usage, 'cache_creation_input_tokens', 0),
+                }
+            })
+
+        return jsonify({"erro": "Limite de iterações de ferramenta atingido"}), 500
+
+    except anthropic.APIError as e:
+        return jsonify({'erro': f'Erro na API Claude: {str(e)}'}), 500
+    except Exception as e:
+        return jsonify({'erro': f'Erro inesperado: {str(e)}'}), 500
+
+
 # ── Init & Run ─────────────────────────────────────────────────────
 
 with app.app_context():
