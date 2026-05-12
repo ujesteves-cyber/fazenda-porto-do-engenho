@@ -240,3 +240,35 @@ def test_excluir_movimento_devolve_qtd(client):
     r4 = client.get("/api/embrioes/1")
     assert r4.json["lote"]["qtd_atual"] == 6
     assert r4.json["movimentos"] == []
+
+
+def test_importar_confirmar_cria_lotes(client):
+    linhas = [
+        {"dt_opu": "01/01/26", "dt_vitrificacao": "10/01/26",
+         "doadora": "AAA", "touro": "TOURO A",
+         "tipo_semen": "Sex F", "qtd": 4, "obs": ""},
+        {"dt_opu": "01/01/26", "dt_vitrificacao": "10/01/26",
+         "doadora": "BBB", "touro": "TOURO B",
+         "tipo_semen": "Conv.", "qtd": 2, "obs": ""},
+    ]
+    r = client.post("/api/embrioes/importar/confirmar", json={
+        "arquivo": "fake.pdf",
+        "data_planilha": "30/04/2026",
+        "linhas": linhas,
+    })
+    assert r.status_code == 200
+    assert r.json["novos"] == 2
+    assert r.json["ignorados"] == 0
+
+
+def test_importar_confirmar_segunda_vez_ignora(client):
+    linhas = [{"dt_opu": "01/01/26", "dt_vitrificacao": "10/01/26",
+               "doadora": "AAA", "touro": "TOURO A",
+               "tipo_semen": "Sex F", "qtd": 4, "obs": ""}]
+    r1 = client.post("/api/embrioes/importar/confirmar", json={
+        "arquivo": "f.pdf", "data_planilha": "30/04/2026", "linhas": linhas})
+    assert r1.json["novos"] == 1
+    r2 = client.post("/api/embrioes/importar/confirmar", json={
+        "arquivo": "f.pdf", "data_planilha": "30/04/2026", "linhas": linhas})
+    assert r2.json["novos"] == 0
+    assert r2.json["ignorados"] == 1

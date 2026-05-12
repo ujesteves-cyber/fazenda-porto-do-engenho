@@ -75,6 +75,7 @@ from flask import (
 )
 import tempfile
 from dotenv import load_dotenv
+from embriao_pdf import parse_fivet_pdf
 
 load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env'), override=True)
 
@@ -3685,6 +3686,95 @@ def api_embrioes_excluir_movimento(mov_id):
         db.execute("DELETE FROM embriao_movimento WHERE id=?", (mov_id,))
         db.commit()
         return jsonify({'ok': True})
+    except Exception as e:
+        db.rollback()
+        return jsonify({'erro': str(e)}), 500
+
+
+@app.route('/api/embrioes/importar/preview', methods=['POST'])
+@api_login_required
+def api_embrioes_importar_preview():
+    """Parse uploaded PDF and return the extracted rows without persisting."""
+    if 'arquivo' not in request.files:
+        return jsonify({'erro': 'arquivo PDF não enviado'}), 400
+    f = request.files['arquivo']
+    if not f.filename.lower().endswith('.pdf'):
+        return jsonify({'erro': 'apenas arquivos PDF são aceitos'}), 400
+    # Persist to a temp path so pdfplumber can open by name
+    tmp = tempfile.NamedTemporaryFile(suffix='.pdf', delete=False)
+    try:
+        f.save(tmp.name)
+        tmp.close()
+        result = parse_fivet_pdf(tmp.name)
+        result['arquivo'] = f.filename
+        return jsonify(result)
+    except ValueError as e:
+        return jsonify({'erro': str(e)}), 400
+    finally:
+        try:
+            os.unlink(tmp.name)
+        except OSError:
+            pass
+
+
+@app.route('/api/embrioes/importar/confirmar', methods=['POST'])
+@api_login_required
+def api_embrioes_importar_confirmar():
+    """Persist the (possibly user-edited) rows. UNIQUE constraint dedupes."""
+    payload = request.json or {}
+    linhas = payload.get('linhas') or []
+    if not linhas:
+        return jsonify({'erro': 'Nenhuma linha para importar'}), 400
+    arquivo = (payload.get('arquivo') or '').strip()
+    data_planilha = (payload.get('data_planilha') or '').strip() or None
+
+    db = get_db()
+    novos, ignorados = 0, 0
+    db.execute('BEGIN')
+    try:
+        for row in linhas:
+            try:
+                qtd = int(row.get('qtd', 0))
+            except (TypeError, ValueError):
+                continue
+            if qtd <= 0:
+                continue
+            doadora = (row.get('doadora') or '').strip()
+            touro = (row.get('touro') or '').strip().upper()
+            tipo = row.get('tipo_semen') or 'Conv.'
+            if tipo not in ('Sex F', 'Conv.'):
+                tipo = 'Conv.'
+            if not doadora or not touro:
+                continue
+            try:
+                db.execute("""
+                    INSERT INTO embriao_lote
+                      (dt_opu, dt_vitrificacao, doadora, doadora_matriz_id,
+                       touro, tipo_semen, qtd_inicial, qtd_atual, obs, arquivo_origem)
+                    VALUES (?,?,?,?,?,?,?,?,?,?)
+                """, (
+                    (row.get('dt_opu') or '').strip(),
+                    (row.get('dt_vitrificacao') or '').strip(),
+                    doadora,
+                    lookup_matriz(doadora),
+                    touro, tipo, qtd, qtd,
+                    (row.get('obs') or '').strip() or None,
+                    arquivo or None,
+                ))
+                novos += 1
+            except sqlite3.IntegrityError:
+                ignorados += 1
+        total = sum(int(r.get('qtd', 0)) for r in linhas if str(r.get('qtd', '')).isdigit())
+        db.execute("""
+            INSERT INTO embriao_import
+              (arquivo, data_planilha, n_lotes_novos, n_lotes_ignorados,
+               n_embrioes_total, imported_by)
+            VALUES (?,?,?,?,?,?)
+        """, (arquivo or None, data_planilha, novos, ignorados, total,
+              session.get('user_id')))
+        db.commit()
+        return jsonify({'ok': True, 'novos': novos, 'ignorados': ignorados,
+                        'total': total})
     except Exception as e:
         db.rollback()
         return jsonify({'erro': str(e)}), 500
