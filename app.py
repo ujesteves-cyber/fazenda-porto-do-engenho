@@ -3411,6 +3411,63 @@ def api_usuarios_mudar_papel(uid):
     return jsonify({'ok': True, 'papel': papel})
 
 
+# ── API: Embriões ──────────────────────────────────────────────────
+
+@app.route('/api/embrioes', methods=['GET'])
+@api_login_required
+def api_embrioes_lista():
+    db = get_db()
+    q = (request.args.get('q') or '').strip()
+    tipo = request.args.get('tipo') or ''
+    touro = (request.args.get('touro') or '').strip()
+    zerados = request.args.get('zerados') == '1'
+
+    sql = "SELECT * FROM embriao_lote WHERE 1=1"
+    params = []
+    if q:
+        sql += " AND (doadora LIKE ? OR touro LIKE ?)"
+        params += [f"%{q}%", f"%{q}%"]
+    if tipo in ('Sex F', 'Conv.'):
+        sql += " AND tipo_semen = ?"
+        params.append(tipo)
+    if touro:
+        sql += " AND touro = ?"
+        params.append(touro)
+    if not zerados:
+        sql += " AND qtd_atual > 0"
+    sql += " ORDER BY dt_vitrificacao DESC, id DESC"
+
+    rows = [dict(r) for r in db.execute(sql, params).fetchall()]
+    return jsonify(rows)
+
+
+@app.route('/api/embrioes/kpis', methods=['GET'])
+@api_login_required
+def api_embrioes_kpis():
+    db = get_db()
+    row = db.execute("""
+        SELECT
+            COALESCE(SUM(qtd_atual), 0)                                    AS total,
+            COALESCE(SUM(CASE WHEN tipo_semen='Sex F' THEN qtd_atual END), 0) AS sex_f,
+            COALESCE(SUM(CASE WHEN tipo_semen='Conv.' THEN qtd_atual END), 0) AS conv,
+            COUNT(DISTINCT CASE WHEN qtd_atual > 0 THEN doadora END)        AS doadoras,
+            COUNT(DISTINCT CASE WHEN qtd_atual > 0 THEN touro END)          AS touros
+        FROM embriao_lote
+    """).fetchone()
+    receita = db.execute(
+        "SELECT COALESCE(SUM(valor_total), 0) AS r "
+        "FROM embriao_movimento WHERE tipo='venda'"
+    ).fetchone()
+    return jsonify({
+        "total": row["total"],
+        "sex_f": row["sex_f"],
+        "conv": row["conv"],
+        "doadoras": row["doadoras"],
+        "touros": row["touros"],
+        "receita_total": receita["r"],
+    })
+
+
 # ── Init & Run ─────────────────────────────────────────────────────
 
 with app.app_context():
