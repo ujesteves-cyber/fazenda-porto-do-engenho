@@ -291,6 +291,30 @@ def get_ultima_rodada(db):
     return db.execute("SELECT * FROM rodadas ORDER BY id DESC LIMIT 1").fetchone()
 
 
+def lookup_matriz(doadora):
+    """Try to match a doadora ID (free text) against matrizes.animal_id.
+
+    Returns the matched animal_id or None.
+    Tries exact match first, then a normalized match (strips spaces/slashes).
+    """
+    if not doadora:
+        return None
+    db = get_db()
+    m = db.execute(
+        "SELECT animal_id FROM matrizes WHERE animal_id=?",
+        (doadora,)
+    ).fetchone()
+    if m:
+        return m["animal_id"]
+    chave = doadora.replace("/", "").replace(" ", "")
+    m = db.execute(
+        "SELECT animal_id FROM matrizes "
+        "WHERE REPLACE(REPLACE(animal_id,' ',''),'/','')=?",
+        (chave,)
+    ).fetchone()
+    return m["animal_id"] if m else None
+
+
 # ── Page routes ────────────────────────────────────────────────────
 
 @app.route('/')
@@ -327,6 +351,30 @@ def ficha():
 @login_required
 def touros():
     return render_template('touros.html')
+
+
+@app.route('/embrioes')
+@login_required
+def embrioes_page():
+    return render_template('embrioes.html')
+
+
+@app.route('/embrioes/<int:lote_id>')
+@login_required
+def embrioes_detalhe_page(lote_id):
+    return render_template('embrioes_detalhe.html', lote_id=lote_id)
+
+
+@app.route('/embrioes/importar')
+@login_required
+def embrioes_importar_page():
+    return render_template('embrioes_importar.html')
+
+
+@app.route('/embrioes/reconciliar')
+@master_required
+def embrioes_reconciliar_page():
+    return render_template('embrioes_reconciliar.html')
 
 
 @app.route('/ficha/certidao/<path:animal_id_enc>')
