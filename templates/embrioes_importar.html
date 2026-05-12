@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+{% block title %}Importar PDF FIVET – Porto do Engenho{% endblock %}
+{% block page_title %}Importar PDF do FIVET{% endblock %}
+
+{% block content %}
+<div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">
+    <a href="/embrioes" style="color:var(--gray40);text-decoration:none;font-size:13px">Estoque</a>
+    <span style="color:var(--gray20)">/</span>
+    <h2 style="font-family:'Barlow Condensed',sans-serif;font-size:20px">Importar PDF FIVET</h2>
+</div>
+
+<!-- Step 1: Upload -->
+<div id="step1" class="panel">
+    <div class="panel-body" style="padding:24px;text-align:center">
+        <p style="margin-bottom:16px;color:var(--gray60)">Selecione o PDF mais recente do laboratório FIVET. O sistema lê a tabela e mostra um preview editável antes de salvar.</p>
+        <input type="file" id="arquivoInput" accept=".pdf" style="font-size:14px">
+        <div style="margin-top:16px">
+            <button class="btn btn-red" onclick="fazerPreview()">Analisar PDF</button>
+        </div>
+        <div id="step1Erro" style="margin-top:12px;color:var(--red);display:none"></div>
+    </div>
+</div>
+
+<!-- Step 2: Preview editavel -->
+<div id="step2" style="display:none">
+    <div id="bannerTotal" class="flash" style="margin-bottom:16px"></div>
+    <div class="panel">
+        <div class="panel-header" style="display:flex;justify-content:space-between;align-items:center">
+            <h2 style="font-size:15px">Preview da Importação</h2>
+            <div>
+                <button class="btn btn-outline btn-sm" onclick="resetar()">Voltar</button>
+                <button class="btn btn-red btn-sm" onclick="confirmar()">Confirmar Importação</button>
+            </div>
+        </div>
+        <div class="panel-body" style="padding:0;overflow-x:auto">
+            <table class="data-table">
+                <thead><tr><th>DT OPU</th><th>DT Vitrif.</th><th>Doadora</th><th>Touro</th><th>Tipo</th><th>Qtd</th><th>Obs</th><th></th></tr></thead>
+                <tbody id="previewBody"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Step 3: Result -->
+<div id="step3" style="display:none" class="panel">
+    <div class="panel-body" style="padding:32px;text-align:center">
+        <h3 style="font-size:18px;margin-bottom:16px">Importação concluída!</h3>
+        <p id="resultadoTexto" style="margin-bottom:24px"></p>
+        <a class="btn btn-red" href="/embrioes">Ver estoque</a>
+        <button class="btn btn-outline" onclick="resetar()" style="margin-left:8px">Importar outro PDF</button>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let parsed = null;
+
+async function fazerPreview() {
+    const f = document.getElementById('arquivoInput').files[0];
+    if (!f) { alert('Selecione um PDF'); return; }
+    const fd = new FormData();
+    fd.append('arquivo', f);
+    const res = await fetch('/api/embrioes/importar/preview', {method: 'POST', body: fd});
+    const data = await res.json();
+    if (data.erro) {
+        document.getElementById('step1Erro').style.display = 'block';
+        document.getElementById('step1Erro').textContent = data.erro;
+        return;
+    }
+    parsed = data;
+    renderPreview();
+    document.getElementById('step1').style.display = 'none';
+    document.getElementById('step2').style.display = 'block';
+}
+
+function renderPreview() {
+    const soma = parsed.linhas.reduce((s, l) => s + (parseInt(l.qtd) || 0), 0);
+    const banner = document.getElementById('bannerTotal');
+    if (parsed.total_declarado === soma) {
+        banner.className = 'flash success';
+        banner.textContent = `✓ Planilha de ${parsed.data_planilha || '?'}: ${parsed.linhas.length} lotes, ${soma} embriões (bate com total declarado).`;
+    } else {
+        banner.className = 'flash error';
+        banner.textContent = `⚠ Divergência: total declarado ${parsed.total_declarado}, soma das linhas ${soma}. Revise antes de importar.`;
+    }
+    document.getElementById('previewBody').innerHTML = parsed.linhas.map((l, i) => `
+        <tr>
+            <td><input value="${l.dt_opu || ''}" data-i="${i}" data-k="dt_opu" style="width:80px"></td>
+            <td><input value="${l.dt_vitrificacao || ''}" data-i="${i}" data-k="dt_vitrificacao" style="width:80px"></td>
+            <td><input value="${l.doadora || ''}" data-i="${i}" data-k="doadora" style="width:80px"></td>
+            <td><input value="${l.touro || ''}" data-i="${i}" data-k="touro" style="width:140px"></td>
+            <td><select data-i="${i}" data-k="tipo_semen">
+                <option value="Sex F" ${l.tipo_semen === 'Sex F' ? 'selected' : ''}>Sex F</option>
+                <option value="Conv." ${l.tipo_semen === 'Conv.' ? 'selected' : ''}>Conv.</option>
+            </select></td>
+            <td><input type="number" value="${l.qtd || 0}" data-i="${i}" data-k="qtd" style="width:60px"></td>
+            <td><input value="${l.obs || ''}" data-i="${i}" data-k="obs" style="width:120px"></td>
+            <td><button class="btn btn-outline btn-sm" onclick="removerLinha(${i})">×</button></td>
+        </tr>
+    `).join('');
+    document.querySelectorAll('#previewBody input, #previewBody select').forEach(el => {
+        el.addEventListener('change', () => {
+            const i = parseInt(el.dataset.i);
+            const k = el.dataset.k;
+            parsed.linhas[i][k] = el.value;
+            if (k === 'qtd') renderPreview();
+        });
+    });
+}
+
+function removerLinha(i) {
+    parsed.linhas.splice(i, 1);
+    renderPreview();
+}
+
+async function confirmar() {
+    const res = await fetch('/api/embrioes/importar/confirmar', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            arquivo: parsed.arquivo,
+            data_planilha: parsed.data_planilha,
+            linhas: parsed.linhas
+        })
+    });
+    const data = await res.json();
+    if (data.ok) {
+        document.getElementById('resultadoTexto').innerHTML =
+            `<strong>${data.novos}</strong> lotes novos importados.<br>` +
+            `<strong>${data.ignorados}</strong> ignorados (já existiam).<br>` +
+            `Total na planilha: ${data.total} embriões.`;
+        document.getElementById('step2').style.display = 'none';
+        document.getElementById('step3').style.display = 'block';
+    } else {
+        alert(data.erro || 'Erro');
+    }
+}
+
+function resetar() {
+    parsed = null;
+    document.getElementById('arquivoInput').value = '';
+    document.getElementById('step1Erro').style.display = 'none';
+    document.getElementById('step1').style.display = 'block';
+    document.getElementById('step2').style.display = 'none';
+    document.getElementById('step3').style.display = 'none';
+}
+</script>
+{% endblock %}
