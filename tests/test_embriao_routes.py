@@ -12,7 +12,6 @@ def client():
     """Flask test client with an isolated temp DB."""
     db_fd, db_path = tempfile.mkstemp(suffix=".db")
     flask_app_module.app.config["TESTING"] = True
-    flask_app_module.app.config["DATABASE"] = db_path
     # Apply schema
     conn = sqlite3.connect(db_path)
     schema = Path("schema.sql").read_text(encoding="utf-8")
@@ -59,7 +58,6 @@ def test_embrioes_lista_empty(client):
 
 def _insert_lote(client, **kw):
     """Helper: insert a lote via raw SQL using the same temp DB."""
-    from flask import g
     with client.application.app_context():
         db = flask_app_module.get_db()
         cols = ["dt_opu", "dt_vitrificacao", "doadora", "touro",
