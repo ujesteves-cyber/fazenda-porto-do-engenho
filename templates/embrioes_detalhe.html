@@ -1,0 +1,264 @@
+{% extends "base.html" %}
+{% block title %}Detalhe do Lote – Porto do Engenho{% endblock %}
+{% block page_title %}Lote de Embriões{% endblock %}
+
+{% block content %}
+<div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">
+    <a href="/embrioes" style="color:var(--gray40);text-decoration:none;font-size:13px">Estoque</a>
+    <span style="color:var(--gray20)">/</span>
+    <h2 id="loteTitulo" style="font-family:'Barlow Condensed',sans-serif;font-size:20px">Carregando...</h2>
+</div>
+
+<div style="display:grid;grid-template-columns:2fr 1fr;gap:20px">
+    <!-- Coluna principal -->
+    <div>
+        <!-- Header info -->
+        <div class="panel">
+            <div class="panel-header" style="border-bottom:3px solid var(--red)">
+                <h2 style="font-size:15px">Informações do Lote</h2>
+            </div>
+            <div class="panel-body" id="loteInfo" style="padding:16px"></div>
+        </div>
+
+        <!-- KPIs -->
+        <div class="kpi-grid" style="margin-top:20px">
+            <div class="kpi-card"><div class="kpi-label">Restante</div><div class="kpi-value" id="kRest">-</div></div>
+            <div class="kpi-card"><div class="kpi-label">Usado em TE</div><div class="kpi-value" id="kTE">-</div></div>
+            <div class="kpi-card"><div class="kpi-label">Vendido</div><div class="kpi-value" id="kVend">-</div></div>
+            <div class="kpi-card green"><div class="kpi-label">Receita</div><div class="kpi-value" id="kRec">-</div></div>
+        </div>
+
+        <!-- Movimentos -->
+        <div class="panel" style="margin-top:20px">
+            <div class="panel-header" style="display:flex;justify-content:space-between;align-items:center">
+                <h2 style="font-size:15px">Movimentos</h2>
+                <div>
+                    <button class="btn btn-outline btn-sm" onclick="abrirMov('te_interna')">+ TE</button>
+                    <button class="btn btn-outline btn-sm" onclick="abrirMov('venda')">+ Venda</button>
+                    <button class="btn btn-outline btn-sm" onclick="abrirMov('perda')">+ Perda</button>
+                </div>
+            </div>
+            <div class="panel-body" style="padding:0;overflow-x:auto">
+                <table class="data-table">
+                    <thead><tr><th>Data</th><th>Tipo</th><th>Qtd</th><th>Detalhes</th><th>Usuário</th><th></th></tr></thead>
+                    <tbody id="movBody"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Coluna lateral: doadora -->
+    <aside>
+        <div id="doadoraPanel" class="panel" style="display:none">
+            <div class="panel-header" style="border-bottom:3px solid var(--red)">
+                <h2 style="font-size:15px">Sobre a doadora</h2>
+            </div>
+            <div class="panel-body" id="doadoraBody" style="padding:16px"></div>
+        </div>
+        {% if is_master %}
+        <div style="margin-top:12px">
+            <button class="btn btn-outline btn-sm" onclick="excluirLote()" style="width:100%;color:var(--red)">Excluir lote</button>
+        </div>
+        {% endif %}
+    </aside>
+</div>
+
+<!-- Modal de movimento -->
+<div id="movModal" class="modal-overlay">
+    <div class="modal-box" style="width:420px">
+        <h3 id="movTitulo" style="font-family:'Barlow Condensed',sans-serif;font-size:18px;margin-bottom:16px"></h3>
+        <div class="form-field"><label>Quantidade *</label><input type="number" id="mQtd" min="1"></div>
+        <div class="form-field"><label>Data *</label><input type="text" id="mData" placeholder="dd/mm/aaaa"></div>
+        <div class="form-field" id="campoReceptora" style="display:none"><label>Receptora (opcional)</label><input type="text" id="mReceptora"></div>
+        <div class="form-field" id="campoComprador" style="display:none"><label>Comprador *</label><input type="text" id="mComprador"></div>
+        <div class="form-field" id="campoValor" style="display:none">
+            <label>Valor unitário (R$) *</label>
+            <input type="number" id="mValor" step="0.01" min="0">
+            <div style="font-size:11px;color:var(--gray60);margin-top:4px">Valor total: <span id="mValorTotal">R$ 0,00</span></div>
+        </div>
+        <div class="form-field"><label>Observação</label><input type="text" id="mObs"></div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+            <button class="btn btn-outline btn-sm" onclick="fecharModal('movModal')">Cancelar</button>
+            <button class="btn btn-red btn-sm" onclick="salvarMov()">Registrar</button>
+        </div>
+    </div>
+</div>
+
+<style>
+.modal-overlay { display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);z-index:200;align-items:center;justify-content:center; }
+.modal-box { background:var(--white);border-radius:8px;padding:32px;box-shadow:0 8px 32px rgba(0,0,0,0.3); }
+.form-field { margin-bottom:12px; }
+.form-field label { display:block;font-size:11px;color:var(--gray60);margin-bottom:4px;font-weight:600;text-transform:uppercase;letter-spacing:0.3px; }
+.form-field input { width:100%;padding:8px 12px;border:1px solid var(--gray20);border-radius:6px;font-family:'Barlow',sans-serif;font-size:13px; }
+.info-row { display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--gray5); }
+.info-row:last-child { border-bottom:none; }
+.info-row .lbl { color:var(--gray60);font-size:12px; }
+.info-row .val { font-family:'DM Mono',monospace;font-size:13px; }
+.badge-mov-te { background:#E3F4EA;color:var(--ok); }
+.badge-mov-venda { background:#FFF3DD;color:#A06800; }
+.badge-mov-perda { background:#F5E2E3;color:var(--red); }
+.badge-mov-ajuste { background:#E3E8F0;color:#2E4D7B; }
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const LOTE_ID = {{ lote_id }};
+let currentMovTipo = null;
+
+function fecharModal(id) { document.getElementById(id).style.display = 'none'; }
+
+function fmtMoney(v) {
+    return v ? `R$ ${Number(v).toLocaleString('pt-BR', {minimumFractionDigits:2})}` : 'R$ 0,00';
+}
+
+async function loadLote() {
+    const data = await API.get(`/api/embrioes/${LOTE_ID}`);
+    if (!data || data.erro) { alert(data.erro || 'Erro'); return; }
+    const l = data.lote;
+    document.getElementById('loteTitulo').textContent = `${l.doadora} × ${l.touro} (${l.tipo_semen})`;
+
+    document.getElementById('loteInfo').innerHTML = `
+        <div class="info-row"><span class="lbl">DT OPU</span><span class="val">${l.dt_opu || '-'}</span></div>
+        <div class="info-row"><span class="lbl">DT Vitrificação</span><span class="val">${l.dt_vitrificacao || '-'}</span></div>
+        <div class="info-row"><span class="lbl">Doadora</span><span class="val">${l.doadora}</span></div>
+        <div class="info-row"><span class="lbl">Touro</span><span class="val">${l.touro}</span></div>
+        <div class="info-row"><span class="lbl">Tipo Sêmen</span><span class="val">${l.tipo_semen}</span></div>
+        <div class="info-row"><span class="lbl">Qtd Inicial</span><span class="val">${l.qtd_inicial}</span></div>
+        <div class="info-row"><span class="lbl">Qtd Atual</span><span class="val"><strong>${l.qtd_atual}</strong></span></div>
+        <div class="info-row"><span class="lbl">Origem</span><span class="val">${l.arquivo_origem || '-'}</span></div>
+        ${l.obs ? `<div class="info-row"><span class="lbl">Obs</span><span class="val">${l.obs}</span></div>` : ''}
+    `;
+
+    document.getElementById('kRest').textContent = data.kpis.restante;
+    document.getElementById('kTE').textContent = data.kpis.usado_te;
+    document.getElementById('kVend').textContent = data.kpis.vendido;
+    document.getElementById('kRec').textContent = fmtMoney(data.kpis.receita);
+
+    // Movimentos
+    const tbody = document.getElementById('movBody');
+    if (!data.movimentos.length) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--gray40);padding:30px">Nenhum movimento registrado</td></tr>';
+    } else {
+        tbody.innerHTML = data.movimentos.map(m => {
+            let detalhes = '';
+            let badgeClass = '';
+            if (m.tipo === 'te_interna') {
+                detalhes = m.receptora ? `Receptora: ${m.receptora}` : '(sem receptora)';
+                badgeClass = 'badge-mov-te';
+            } else if (m.tipo === 'venda') {
+                detalhes = `${m.comprador || '?'} · ${fmtMoney(m.valor_unit)}/un · Total ${fmtMoney(m.valor_total)}`;
+                badgeClass = 'badge-mov-venda';
+            } else if (m.tipo === 'perda') {
+                detalhes = m.obs || '-';
+                badgeClass = 'badge-mov-perda';
+            } else if (m.tipo === 'ajuste_lab') {
+                detalhes = m.obs || '-';
+                badgeClass = 'badge-mov-ajuste';
+            }
+            const tipoLabel = {
+                te_interna: 'TE', venda: 'Venda', perda: 'Perda', ajuste_lab: 'Ajuste'
+            }[m.tipo] || m.tipo;
+            return `<tr>
+                <td class="mono">${m.data}</td>
+                <td><span class="badge ${badgeClass}">${tipoLabel}</span></td>
+                <td class="mono"><strong>${m.qtd}</strong></td>
+                <td style="font-size:12px">${detalhes}</td>
+                <td style="font-size:12px">${m.user_nome || '-'}</td>
+                <td><button class="btn btn-outline btn-sm" onclick="excluirMov(${m.id})">Excluir</button></td>
+            </tr>`;
+        }).join('');
+    }
+
+    // Doadora panel
+    if (l.doadora_matriz_id) {
+        const dInfo = await API.get(`/api/embrioes/doadora-info/${encodeURIComponent(l.doadora_matriz_id)}`);
+        if (dInfo && !dInfo.erro) {
+            document.getElementById('doadoraPanel').style.display = 'block';
+            document.getElementById('doadoraBody').innerHTML = `
+                <div class="info-row"><span class="lbl">ID</span><span class="val">${dInfo.animal_id}</span></div>
+                <div class="info-row"><span class="lbl">Categoria</span><span class="val">${dInfo.categoria || '-'}</span></div>
+                <div class="info-row"><span class="lbl">ICIAGen</span><span class="val">${dInfo.iciagen != null ? dInfo.iciagen.toFixed(2) : '-'}</span></div>
+                <div class="info-row"><span class="lbl">IDESM</span><span class="val">${dInfo.idesm != null ? dInfo.idesm.toFixed(2) : '-'}</span></div>
+                <div class="info-row"><span class="lbl">RMat</span><span class="val">${dInfo.rmat != null ? dInfo.rmat.toFixed(2) : '-'}</span></div>
+                <div style="margin-top:12px"><a class="btn btn-red btn-sm" href="/ficha?id=${encodeURIComponent(dInfo.animal_id)}" style="display:block;text-align:center">Ver ficha completa ↗</a></div>
+            `;
+        }
+    }
+}
+
+function abrirMov(tipo) {
+    currentMovTipo = tipo;
+    document.getElementById('mQtd').value = '';
+    document.getElementById('mData').value = new Date().toLocaleDateString('pt-BR');
+    document.getElementById('mReceptora').value = '';
+    document.getElementById('mComprador').value = '';
+    document.getElementById('mValor').value = '';
+    document.getElementById('mObs').value = '';
+    document.getElementById('mValorTotal').textContent = 'R$ 0,00';
+    document.getElementById('campoReceptora').style.display = tipo === 'te_interna' ? 'block' : 'none';
+    document.getElementById('campoComprador').style.display = tipo === 'venda' ? 'block' : 'none';
+    document.getElementById('campoValor').style.display = tipo === 'venda' ? 'block' : 'none';
+    const titulos = {
+        te_interna: 'Registrar TE Interna',
+        venda: 'Registrar Venda',
+        perda: 'Registrar Perda / Descarte'
+    };
+    document.getElementById('movTitulo').textContent = titulos[tipo];
+    document.getElementById('movModal').style.display = 'flex';
+}
+
+document.getElementById('mValor').addEventListener('input', recalcTotal);
+document.getElementById('mQtd').addEventListener('input', recalcTotal);
+function recalcTotal() {
+    if (currentMovTipo !== 'venda') return;
+    const q = parseInt(document.getElementById('mQtd').value || '0');
+    const v = parseFloat(document.getElementById('mValor').value || '0');
+    document.getElementById('mValorTotal').textContent = `R$ ${(q * v).toLocaleString('pt-BR', {minimumFractionDigits:2})}`;
+}
+
+async function salvarMov() {
+    const body = {
+        tipo: currentMovTipo,
+        qtd: parseInt(document.getElementById('mQtd').value || '0'),
+        data: document.getElementById('mData').value.trim(),
+        receptora: document.getElementById('mReceptora').value.trim(),
+        comprador: document.getElementById('mComprador').value.trim(),
+        valor_unit: parseFloat(document.getElementById('mValor').value || '0') || null,
+        obs: document.getElementById('mObs').value.trim(),
+    };
+    if (!body.qtd || body.qtd <= 0) { alert('Quantidade obrigatória'); return; }
+    if (!body.data) { alert('Data obrigatória'); return; }
+    if (currentMovTipo === 'venda' && !body.comprador) { alert('Comprador obrigatório'); return; }
+    const res = await fetch(`/api/embrioes/${LOTE_ID}/movimento`, {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    if (data.ok) {
+        fecharModal('movModal');
+        loadLote();
+    } else {
+        alert(data.erro || 'Erro');
+    }
+}
+
+async function excluirMov(mid) {
+    if (!confirm('Excluir movimento? A quantidade volta para o lote.')) return;
+    const res = await fetch(`/api/embrioes/movimento/${mid}`, {method: 'DELETE'});
+    const data = await res.json();
+    if (data.ok) loadLote();
+    else alert(data.erro || 'Erro');
+}
+
+async function excluirLote() {
+    if (!confirm('Excluir este lote? Movimentos serão removidos junto.')) return;
+    const res = await fetch(`/api/embrioes/${LOTE_ID}`, {method: 'DELETE'});
+    const data = await res.json();
+    if (data.ok) window.location = '/embrioes';
+    else alert(data.erro || 'Erro');
+}
+
+loadLote();
+</script>
+{% endblock %}
