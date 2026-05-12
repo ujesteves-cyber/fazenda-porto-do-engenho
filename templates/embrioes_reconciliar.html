@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+{% block title %}Reconciliar Estoque – Porto do Engenho{% endblock %}
+{% block page_title %}Reconciliar com PDF do FIVET{% endblock %}
+
+{% block content %}
+<div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">
+    <a href="/embrioes" style="color:var(--gray40);text-decoration:none;font-size:13px">Estoque</a>
+    <span style="color:var(--gray20)">/</span>
+    <h2 style="font-family:'Barlow Condensed',sans-serif;font-size:20px">Reconciliar com PDF</h2>
+</div>
+
+<div id="step1" class="panel">
+    <div class="panel-body" style="padding:24px;text-align:center">
+        <p style="margin-bottom:16px;color:var(--gray60)">A reconciliação compara o estoque do sistema com o PDF mais recente do laboratório. Use quando suspeitar de divergência ou em conferência periódica.</p>
+        <input type="file" id="arquivoRec" accept=".pdf" style="font-size:14px">
+        <div style="margin-top:16px">
+            <button class="btn btn-red" onclick="analisar()">Analisar Divergências</button>
+        </div>
+        <div id="step1Erro" style="margin-top:12px;color:var(--red);display:none"></div>
+    </div>
+</div>
+
+<div id="step2" style="display:none">
+    <div id="resumoDiff" class="panel" style="margin-bottom:20px">
+        <div class="panel-body" id="resumoDiffBody" style="padding:16px"></div>
+    </div>
+
+    <div class="panel" id="painelDivergentes" style="margin-bottom:16px;display:none">
+        <div class="panel-header"><h2 style="font-size:15px">Lotes com Qtd. Divergente</h2></div>
+        <div class="panel-body" style="padding:0;overflow-x:auto">
+            <table class="data-table">
+                <thead><tr><th>Doadora</th><th>Touro</th><th>Tipo</th><th>Vitrif.</th><th>Sistema</th><th>Planilha</th><th>Diff</th><th>Aplicar?</th></tr></thead>
+                <tbody id="divBody"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="panel" id="painelSumidos" style="margin-bottom:16px;display:none">
+        <div class="panel-header"><h2 style="font-size:15px">Lotes Sumidos do Lab</h2></div>
+        <div class="panel-body" style="padding:0;overflow-x:auto">
+            <table class="data-table">
+                <thead><tr><th>Doadora</th><th>Touro</th><th>Tipo</th><th>Vitrif.</th><th>Sistema</th><th>Zerar?</th></tr></thead>
+                <tbody id="sumBody"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button class="btn btn-outline" onclick="resetar()">Cancelar</button>
+        <button class="btn btn-red" onclick="aplicarSelecionados()">Aplicar Ajustes Marcados</button>
+    </div>
+</div>
+
+<div id="step3" style="display:none" class="panel">
+    <div class="panel-body" style="padding:32px;text-align:center">
+        <h3 style="font-size:18px;margin-bottom:16px">Reconciliação concluída</h3>
+        <p id="resultadoRec" style="margin-bottom:24px"></p>
+        <a class="btn btn-red" href="/embrioes">Voltar ao estoque</a>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let diff = null;
+let dataPlanilha = null;
+
+async function analisar() {
+    const f = document.getElementById('arquivoRec').files[0];
+    if (!f) { alert('Selecione um PDF'); return; }
+    const fd = new FormData();
+    fd.append('arquivo', f);
+    // First parse the PDF using the same preview endpoint
+    const preview = await fetch('/api/embrioes/importar/preview', {method: 'POST', body: fd});
+    const parsed = await preview.json();
+    if (parsed.erro) {
+        document.getElementById('step1Erro').style.display = 'block';
+        document.getElementById('step1Erro').textContent = parsed.erro;
+        return;
+    }
+    dataPlanilha = parsed.data_planilha;
+    const rec = await fetch('/api/embrioes/reconciliar/preview', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({linhas: parsed.linhas, data_planilha: parsed.data_planilha})
+    });
+    diff = await rec.json();
+    if (diff.erro) { alert(diff.erro); return; }
+    renderDiff();
+    document.getElementById('step1').style.display = 'none';
+    document.getElementById('step2').style.display = 'block';
+}
+
+function renderDiff() {
+    document.getElementById('resumoDiffBody').innerHTML = `
+        <p>Comparando com planilha de <strong>${dataPlanilha || '?'}</strong>:</p>
+        <ul style="margin:8px 0 0 24px">
+            <li><strong>${diff.divergentes.length}</strong> lotes com qtd divergente</li>
+            <li><strong>${diff.sumidos.length}</strong> lotes sumiram do lab</li>
+            <li><strong>${diff.novos.length}</strong> lotes novos (use Importar para adicioná-los)</li>
+        </ul>
+    `;
+
+    if (diff.divergentes.length) {
+        document.getElementById('painelDivergentes').style.display = 'block';
+        document.getElementById('divBody').innerHTML = diff.divergentes.map(d => `
+            <tr>
+                <td>${d.doadora}</td><td>${d.touro}</td><td>${d.tipo_semen}</td><td>${d.dt_vitrificacao || '-'}</td>
+                <td class="mono">${d.sistema}</td>
+                <td class="mono">${d.planilha}</td>
+                <td class="mono" style="color:${d.diferenca < 0 ? 'var(--red)' : 'var(--ok)'}">
+                    ${d.diferenca > 0 ? '+' : ''}${d.diferenca}
+                </td>
+                <td><input type="checkbox" class="diff-check" data-id="${d.lote_id}" data-diff="${d.diferenca}"></td>
+            </tr>
+        `).join('');
+    }
+
+    if (diff.sumidos.length) {
+        document.getElementById('painelSumidos').style.display = 'block';
+        document.getElementById('sumBody').innerHTML = diff.sumidos.map(s => `
+            <tr>
+                <td>${s.doadora}</td><td>${s.touro}</td><td>${s.tipo_semen}</td><td>${s.dt_vitrificacao || '-'}</td>
+                <td class="mono">${s.sistema}</td>
+                <td><input type="checkbox" class="sum-check" data-id="${s.lote_id}" data-sistema="${s.sistema}"></td>
+            </tr>
+        `).join('');
+    }
+}
+
+async function aplicarSelecionados() {
+    const ajustes = [];
+    document.querySelectorAll('.diff-check:checked').forEach(el => {
+        ajustes.push({lote_id: parseInt(el.dataset.id), diferenca: parseInt(el.dataset.diff)});
+    });
+    document.querySelectorAll('.sum-check:checked').forEach(el => {
+        ajustes.push({lote_id: parseInt(el.dataset.id), diferenca: -parseInt(el.dataset.sistema)});
+    });
+    if (!ajustes.length) { alert('Marque pelo menos um item para aplicar'); return; }
+    const res = await fetch('/api/embrioes/reconciliar/aplicar', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ajustes, data_planilha: dataPlanilha})
+    });
+    const data = await res.json();
+    if (data.ok) {
+        document.getElementById('resultadoRec').textContent = `${data.aplicados} ajustes aplicados.`;
+        document.getElementById('step2').style.display = 'none';
+        document.getElementById('step3').style.display = 'block';
+    } else {
+        alert(data.erro || 'Erro');
+    }
+}
+
+function resetar() {
+    diff = null;
+    dataPlanilha = null;
+    document.getElementById('arquivoRec').value = '';
+    document.getElementById('step1Erro').style.display = 'none';
+    document.getElementById('step1').style.display = 'block';
+    document.getElementById('step2').style.display = 'none';
+    document.getElementById('step3').style.display = 'none';
+    document.getElementById('painelDivergentes').style.display = 'none';
+    document.getElementById('painelSumidos').style.display = 'none';
+}
+</script>
+{% endblock %}
