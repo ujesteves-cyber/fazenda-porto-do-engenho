@@ -1,0 +1,178 @@
+{% extends "base.html" %}
+{% block title %}Estoque de Embriões – Porto do Engenho{% endblock %}
+{% block page_title %}Estoque de Embriões{% endblock %}
+
+{% block content %}
+<!-- KPI cards -->
+<div class="kpi-grid">
+    <div class="kpi-card"><div class="kpi-label">Estoque Total</div><div class="kpi-value" id="kTotal">-</div></div>
+    <div class="kpi-card"><div class="kpi-label">Sex F</div><div class="kpi-value" id="kSexF">-</div></div>
+    <div class="kpi-card"><div class="kpi-label">Convencional</div><div class="kpi-value" id="kConv">-</div></div>
+    <div class="kpi-card"><div class="kpi-label">Doadoras</div><div class="kpi-value" id="kDoadoras">-</div></div>
+    <div class="kpi-card"><div class="kpi-label">Touros</div><div class="kpi-value" id="kTouros">-</div></div>
+    <div class="kpi-card green"><div class="kpi-label">Receita Total</div><div class="kpi-value" id="kReceita">-</div></div>
+</div>
+
+<!-- Filters / actions -->
+<div class="filters">
+    <input type="text" id="fBusca" placeholder="Buscar doadora ou touro..." style="width:220px">
+    <select id="fTipo">
+        <option value="">Todos os tipos</option>
+        <option value="Sex F">Sex F</option>
+        <option value="Conv.">Convencional</option>
+    </select>
+    <select id="fTouro"><option value="">Todos os touros</option></select>
+    <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
+        <input type="checkbox" id="fZerados"> Mostrar lotes zerados
+    </label>
+    <button class="btn btn-outline btn-sm" onclick="loadLista()">Filtrar</button>
+    <div style="flex:1"></div>
+    <a href="/embrioes/importar" class="btn btn-black btn-sm">Importar PDF FIVET</a>
+    {% if is_master %}<a href="/embrioes/reconciliar" class="btn btn-outline btn-sm">Reconciliar</a>{% endif %}
+    <button class="btn btn-red btn-sm" onclick="abrirNovoLote()">+ Lote manual</button>
+</div>
+
+<!-- Table -->
+<div class="panel">
+    <div class="panel-body" style="overflow-x:auto">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>DT OPU</th><th>DT Vitrif.</th><th>Doadora</th><th>Touro</th>
+                    <th>Tipo</th><th>Qtd Inicial</th><th>Qtd Atual</th><th>Ações</th>
+                </tr>
+            </thead>
+            <tbody id="lotesBody">
+                <tr><td colspan="8" style="text-align:center;color:var(--gray40);padding:40px">Carregando...</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Modal: novo lote manual -->
+<div id="novoLoteModal" class="modal-overlay">
+    <div class="modal-box" style="width:520px">
+        <h3 style="font-family:'Barlow Condensed',sans-serif;font-size:18px;margin-bottom:16px">Novo Lote Manual</h3>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <div class="form-field"><label>DT OPU</label><input type="text" id="nDtOpu" placeholder="dd/mm/aa"></div>
+            <div class="form-field"><label>DT Vitrificação</label><input type="text" id="nDtVit" placeholder="dd/mm/aa"></div>
+            <div class="form-field"><label>Doadora *</label><input type="text" id="nDoadora"></div>
+            <div class="form-field"><label>Touro *</label><input type="text" id="nTouro"></div>
+            <div class="form-field"><label>Tipo Sêmen *</label>
+                <select id="nTipo"><option value="Sex F">Sex F</option><option value="Conv.">Conv.</option></select>
+            </div>
+            <div class="form-field"><label>Quantidade *</label><input type="number" id="nQtd" min="1"></div>
+            <div class="form-field" style="grid-column:1/-1"><label>Observação</label><input type="text" id="nObs"></div>
+        </div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+            <button class="btn btn-outline btn-sm" onclick="fecharModal('novoLoteModal')">Cancelar</button>
+            <button class="btn btn-red btn-sm" onclick="salvarNovoLote()">Criar</button>
+        </div>
+    </div>
+</div>
+
+<style>
+.modal-overlay { display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);z-index:200;align-items:center;justify-content:center; }
+.modal-box { background:var(--white);border-radius:8px;padding:32px;box-shadow:0 8px 32px rgba(0,0,0,0.3); }
+.form-field { margin-bottom:12px; }
+.form-field label { display:block;font-size:11px;color:var(--gray60);margin-bottom:4px;font-weight:600;text-transform:uppercase;letter-spacing:0.3px; }
+.form-field input, .form-field select { width:100%;padding:8px 12px;border:1px solid var(--gray20);border-radius:6px;font-family:'Barlow',sans-serif;font-size:13px; }
+.doadora-link { color:var(--red);text-decoration:none;font-weight:600; }
+.doadora-link:hover { text-decoration:underline; }
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function fecharModal(id) { document.getElementById(id).style.display = 'none'; }
+
+async function loadKpis() {
+    const k = await API.get('/api/embrioes/kpis');
+    if (!k) return;
+    document.getElementById('kTotal').textContent = k.total;
+    document.getElementById('kSexF').textContent = k.sex_f;
+    document.getElementById('kConv').textContent = k.conv;
+    document.getElementById('kDoadoras').textContent = k.doadoras;
+    document.getElementById('kTouros').textContent = k.touros;
+    document.getElementById('kReceita').textContent = k.receita_total
+        ? `R$ ${Number(k.receita_total).toLocaleString('pt-BR')}` : 'R$ 0';
+}
+
+async function loadLista() {
+    const params = new URLSearchParams();
+    const q = document.getElementById('fBusca').value.trim();
+    if (q) params.set('q', q);
+    const tipo = document.getElementById('fTipo').value;
+    if (tipo) params.set('tipo', tipo);
+    const touro = document.getElementById('fTouro').value;
+    if (touro) params.set('touro', touro);
+    if (document.getElementById('fZerados').checked) params.set('zerados', '1');
+
+    const data = await API.get(`/api/embrioes?${params}`);
+    const tbody = document.getElementById('lotesBody');
+    if (!data || data.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--gray40);padding:40px">Nenhum lote. Use "+ Lote manual" ou "Importar PDF FIVET".</td></tr>';
+        return;
+    }
+    // Populate touro filter dropdown
+    const tourosSet = new Set(data.map(l => l.touro));
+    const sel = document.getElementById('fTouro');
+    const currentVal = sel.value;
+    sel.innerHTML = '<option value="">Todos os touros</option>' +
+        [...tourosSet].sort().map(t => `<option value="${t}">${t}</option>`).join('');
+    sel.value = currentVal;
+
+    tbody.innerHTML = data.map(l => {
+        const zerado = l.qtd_atual === 0;
+        const doadora = l.doadora_matriz_id
+            ? `<a class="doadora-link" href="/ficha?id=${encodeURIComponent(l.doadora_matriz_id)}">${l.doadora} ↗</a>`
+            : l.doadora;
+        return `<tr style="${zerado ? 'opacity:0.5' : ''}">
+            <td class="mono" style="font-size:12px">${l.dt_opu || '-'}</td>
+            <td class="mono" style="font-size:12px">${l.dt_vitrificacao || '-'}</td>
+            <td>${doadora}</td>
+            <td style="font-size:12px">${l.touro}</td>
+            <td>${l.tipo_semen}</td>
+            <td class="mono">${l.qtd_inicial}</td>
+            <td class="mono"><strong>${l.qtd_atual}</strong></td>
+            <td style="white-space:nowrap">
+                <a class="btn btn-outline btn-sm" href="/embrioes/${l.id}">Ver</a>
+            </td>
+        </tr>`;
+    }).join('');
+}
+
+function abrirNovoLote() {
+    ['nDtOpu','nDtVit','nDoadora','nTouro','nQtd','nObs'].forEach(id => document.getElementById(id).value = '');
+    document.getElementById('nTipo').value = 'Sex F';
+    document.getElementById('novoLoteModal').style.display = 'flex';
+}
+
+async function salvarNovoLote() {
+    const body = {
+        dt_opu: document.getElementById('nDtOpu').value.trim(),
+        dt_vitrificacao: document.getElementById('nDtVit').value.trim(),
+        doadora: document.getElementById('nDoadora').value.trim(),
+        touro: document.getElementById('nTouro').value.trim(),
+        tipo_semen: document.getElementById('nTipo').value,
+        qtd: parseInt(document.getElementById('nQtd').value || '0'),
+        obs: document.getElementById('nObs').value.trim(),
+    };
+    const res = await fetch('/api/embrioes', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    if (data.ok) {
+        fecharModal('novoLoteModal');
+        loadKpis();
+        loadLista();
+    } else {
+        alert(data.erro || 'Erro ao criar lote');
+    }
+}
+
+loadKpis();
+loadLista();
+</script>
+{% endblock %}
