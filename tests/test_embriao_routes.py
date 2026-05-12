@@ -180,3 +180,63 @@ def test_embrioes_excluir(client):
     assert r.status_code == 200
     r2 = client.get("/api/embrioes/1")
     assert r2.status_code == 404
+
+
+def test_movimento_te_decrementa_saldo(client):
+    _insert_lote(client, doadora="T1", qtd_atual=6)
+    r = client.post("/api/embrioes/1/movimento", json={
+        "tipo": "te_interna", "qtd": 2, "data": "15/05/2026",
+        "receptora": "045"
+    })
+    assert r.status_code == 200
+    r2 = client.get("/api/embrioes/1")
+    assert r2.json["lote"]["qtd_atual"] == 4
+    assert len(r2.json["movimentos"]) == 1
+    assert r2.json["movimentos"][0]["tipo"] == "te_interna"
+    assert r2.json["movimentos"][0]["qtd"] == 2
+
+
+def test_movimento_venda_calcula_valor_total(client):
+    _insert_lote(client, doadora="V1", qtd_atual=10)
+    r = client.post("/api/embrioes/1/movimento", json={
+        "tipo": "venda", "qtd": 3, "data": "20/05/2026",
+        "comprador": "Fazenda X", "valor_unit": 1500.0
+    })
+    assert r.status_code == 200
+    r2 = client.get("/api/embrioes/1")
+    assert r2.json["lote"]["qtd_atual"] == 7
+    assert r2.json["kpis"]["receita"] == 4500.0
+
+
+def test_movimento_saldo_insuficiente_400(client):
+    _insert_lote(client, doadora="S1", qtd_atual=2)
+    r = client.post("/api/embrioes/1/movimento", json={
+        "tipo": "perda", "qtd": 5, "data": "15/05/2026"
+    })
+    assert r.status_code == 400
+    r2 = client.get("/api/embrioes/1")
+    assert r2.json["lote"]["qtd_atual"] == 2  # unchanged
+
+
+def test_movimento_tipo_invalido_400(client):
+    _insert_lote(client, doadora="X1", qtd_atual=5)
+    r = client.post("/api/embrioes/1/movimento", json={
+        "tipo": "outro_tipo", "qtd": 1, "data": "15/05/2026"
+    })
+    assert r.status_code == 400
+
+
+def test_excluir_movimento_devolve_qtd(client):
+    _insert_lote(client, doadora="REV", qtd_atual=6)
+    r = client.post("/api/embrioes/1/movimento", json={
+        "tipo": "te_interna", "qtd": 2, "data": "01/05/2026"
+    })
+    assert r.status_code == 200
+    # Find the movimento id
+    r2 = client.get("/api/embrioes/1")
+    mov_id = r2.json["movimentos"][0]["id"]
+    r3 = client.delete(f"/api/embrioes/movimento/{mov_id}")
+    assert r3.status_code == 200
+    r4 = client.get("/api/embrioes/1")
+    assert r4.json["lote"]["qtd_atual"] == 6
+    assert r4.json["movimentos"] == []

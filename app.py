@@ -3592,6 +3592,104 @@ def api_embrioes_excluir(lote_id):
     return jsonify({'ok': True})
 
 
+@app.route('/api/embrioes/<int:lote_id>/movimento', methods=['POST'])
+@api_login_required
+def api_embrioes_criar_movimento(lote_id):
+    data = request.json or {}
+    tipo = data.get('tipo')
+    if tipo not in ('te_interna', 'venda', 'perda', 'ajuste_lab'):
+        return jsonify({'erro': 'Tipo inválido'}), 400
+    if tipo == 'ajuste_lab' and not is_master(current_user()):
+        return jsonify({'erro': 'Apenas master pode criar ajuste de reconciliação'}), 403
+
+    try:
+        qtd = int(data.get('qtd', 0))
+    except (TypeError, ValueError):
+        return jsonify({'erro': 'qtd deve ser inteiro'}), 400
+    if qtd <= 0:
+        return jsonify({'erro': 'qtd deve ser positivo'}), 400
+
+    data_mov = (data.get('data') or '').strip()
+    if not data_mov:
+        return jsonify({'erro': 'Campo data é obrigatório'}), 400
+
+    valor_unit = data.get('valor_unit')
+    if valor_unit is not None:
+        try:
+            valor_unit = float(valor_unit)
+        except (TypeError, ValueError):
+            return jsonify({'erro': 'valor_unit inválido'}), 400
+
+    db = get_db()
+    db.execute('BEGIN')
+    try:
+        lote = db.execute(
+            "SELECT qtd_atual FROM embriao_lote WHERE id=?", (lote_id,)
+        ).fetchone()
+        if not lote:
+            db.rollback()
+            return jsonify({'erro': 'Lote não encontrado'}), 404
+        if qtd > lote['qtd_atual']:
+            db.rollback()
+            return jsonify({
+                'erro': f'Saldo insuficiente (disponível: {lote["qtd_atual"]})'
+            }), 400
+
+        valor_total = (valor_unit * qtd) if (tipo == 'venda' and valor_unit) else None
+
+        db.execute("""
+            INSERT INTO embriao_movimento
+              (lote_id, tipo, qtd, data, receptora, comprador,
+               valor_unit, valor_total, obs, created_by)
+            VALUES (?,?,?,?,?,?,?,?,?,?)
+        """, (
+            lote_id, tipo, qtd, data_mov,
+            (data.get('receptora') or '').strip() or None,
+            (data.get('comprador') or '').strip() or None,
+            valor_unit, valor_total,
+            (data.get('obs') or '').strip() or None,
+            session.get('user_id'),
+        ))
+        db.execute(
+            "UPDATE embriao_lote SET qtd_atual = qtd_atual - ? WHERE id=?",
+            (qtd, lote_id)
+        )
+        db.commit()
+        return jsonify({'ok': True})
+    except Exception as e:
+        db.rollback()
+        return jsonify({'erro': str(e)}), 500
+
+
+@app.route('/api/embrioes/movimento/<int:mov_id>', methods=['DELETE'])
+@api_login_required
+def api_embrioes_excluir_movimento(mov_id):
+    db = get_db()
+    mov = db.execute(
+        "SELECT lote_id, qtd, tipo FROM embriao_movimento WHERE id=?",
+        (mov_id,)
+    ).fetchone()
+    if not mov:
+        return jsonify({'erro': 'Movimento não encontrado'}), 404
+    if mov['tipo'] == 'ajuste_lab' and not is_master(current_user()):
+        return jsonify({
+            'erro': 'Apenas master pode excluir ajuste de reconciliação'
+        }), 403
+
+    db.execute('BEGIN')
+    try:
+        db.execute(
+            "UPDATE embriao_lote SET qtd_atual = qtd_atual + ? WHERE id=?",
+            (mov['qtd'], mov['lote_id'])
+        )
+        db.execute("DELETE FROM embriao_movimento WHERE id=?", (mov_id,))
+        db.commit()
+        return jsonify({'ok': True})
+    except Exception as e:
+        db.rollback()
+        return jsonify({'erro': str(e)}), 500
+
+
 # ── Init & Run ─────────────────────────────────────────────────────
 
 with app.app_context():
