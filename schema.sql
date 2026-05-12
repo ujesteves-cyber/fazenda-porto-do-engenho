@@ -220,3 +220,55 @@ CREATE INDEX IF NOT EXISTS idx_req_itens  ON requisicoes_itens(requisicao_id);
 CREATE INDEX IF NOT EXISTS idx_req_hist   ON requisicoes_historico(requisicao_id);
 CREATE INDEX IF NOT EXISTS idx_catalogo_nome ON itens_catalogo(nome);
 -- idx_req_itens_cat criado em init_db após ALTER TABLE (ordem de migração)
+
+-- =========================================================
+-- Estoque de Embriões (FIV-TE)
+-- =========================================================
+
+CREATE TABLE IF NOT EXISTS embriao_lote (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    dt_opu              TEXT,
+    dt_vitrificacao     TEXT,
+    doadora             TEXT NOT NULL,
+    doadora_matriz_id   TEXT,
+    touro               TEXT NOT NULL,
+    tipo_semen          TEXT NOT NULL,
+    qtd_inicial         INTEGER NOT NULL,
+    qtd_atual           INTEGER NOT NULL,
+    obs                 TEXT,
+    lab                 TEXT DEFAULT 'FIVET',
+    data_import         DATETIME DEFAULT CURRENT_TIMESTAMP,
+    arquivo_origem      TEXT,
+    UNIQUE(dt_opu, dt_vitrificacao, doadora, touro, tipo_semen)
+);
+CREATE INDEX IF NOT EXISTS idx_lote_doadora ON embriao_lote(doadora);
+CREATE INDEX IF NOT EXISTS idx_lote_touro   ON embriao_lote(touro);
+CREATE INDEX IF NOT EXISTS idx_lote_atual   ON embriao_lote(qtd_atual);
+
+CREATE TABLE IF NOT EXISTS embriao_movimento (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    lote_id       INTEGER NOT NULL REFERENCES embriao_lote(id) ON DELETE CASCADE,
+    tipo          TEXT NOT NULL,
+    qtd           INTEGER NOT NULL,
+    data          TEXT NOT NULL,
+    receptora     TEXT,
+    comprador     TEXT,
+    valor_unit    REAL,
+    valor_total   REAL,
+    obs           TEXT,
+    created_by    INTEGER REFERENCES usuarios(id),
+    created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_mov_lote ON embriao_movimento(lote_id);
+CREATE INDEX IF NOT EXISTS idx_mov_tipo ON embriao_movimento(tipo);
+
+CREATE TABLE IF NOT EXISTS embriao_import (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    arquivo           TEXT,
+    data_planilha     TEXT,
+    n_lotes_novos     INTEGER,
+    n_lotes_ignorados INTEGER,
+    n_embrioes_total  INTEGER,
+    imported_by       INTEGER REFERENCES usuarios(id),
+    imported_at       DATETIME DEFAULT CURRENT_TIMESTAMP
+);
