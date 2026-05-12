@@ -308,3 +308,24 @@ def test_reconciliar_aplicar_cria_ajuste(client):
     assert r2.json["lote"]["qtd_atual"] == 3
     assert r2.json["movimentos"][0]["tipo"] == "ajuste_lab"
     assert r2.json["movimentos"][0]["qtd"] == 2
+
+
+def test_doadora_info_nao_cadastrada(client):
+    r = client.get("/api/embrioes/doadora-info/NAOEXISTE")
+    assert r.status_code == 404
+
+
+def test_doadora_info_matriz_existe(client):
+    # Insert a matriz via fixture's db
+    from flask import g
+    with client.application.app_context():
+        db = flask_app_module.get_db()
+        db.execute(
+            "INSERT INTO matrizes (animal_id, categoria) VALUES (?, ?)",
+            ("P1234", "M")
+        )
+        db.commit()
+    r = client.get("/api/embrioes/doadora-info/P1234")
+    assert r.status_code == 200
+    assert r.json["animal_id"] == "P1234"
+    assert r.json["categoria"] == "M"

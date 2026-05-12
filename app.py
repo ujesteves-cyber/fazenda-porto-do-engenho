@@ -3902,6 +3902,42 @@ def api_embrioes_reconciliar_aplicar():
         return jsonify({'erro': str(e)}), 500
 
 
+@app.route('/api/embrioes/doadora-info/<path:doadora>', methods=['GET'])
+@api_login_required
+def api_embrioes_doadora_info(doadora):
+    matched = lookup_matriz(doadora)
+    if not matched:
+        return jsonify({'erro': 'doadora não cadastrada como matriz'}), 404
+    db = get_db()
+    m = db.execute("""
+        SELECT m.animal_id, m.categoria, m.ceip, m.precoce,
+               a.iciagen, a.deca_icia_g, a.idesm, a.rmat
+        FROM matrizes m
+        LEFT JOIN avaliacoes a ON a.animal_id = m.animal_id
+        WHERE m.animal_id = ?
+        ORDER BY a.rodada_id DESC LIMIT 1
+    """, (matched,)).fetchone()
+    return jsonify(dict(m))
+
+
+@app.route('/api/embrioes/relink', methods=['POST'])
+@api_master_required
+def api_embrioes_relink():
+    """Re-runs lookup_matriz for every lote and updates doadora_matriz_id."""
+    db = get_db()
+    rows = db.execute("SELECT id, doadora FROM embriao_lote").fetchall()
+    atualizados = 0
+    for r in rows:
+        novo = lookup_matriz(r['doadora'])
+        db.execute(
+            "UPDATE embriao_lote SET doadora_matriz_id=? WHERE id=?",
+            (novo, r['id'])
+        )
+        atualizados += 1
+    db.commit()
+    return jsonify({'ok': True, 'atualizados': atualizados})
+
+
 # ── Init & Run ─────────────────────────────────────────────────────
 
 with app.app_context():
