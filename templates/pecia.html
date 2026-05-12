@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% block title %}PecIA{% endblock %}
+{% block page_title %}PecIA{% endblock %}
+
+{% block content %}
+<style>
+    :root {
+        --pc-primary: #D01B20;
+        --pc-primary-soft: rgba(208,27,32,.12);
+        --pc-surface: #111111;
+        --pc-surface2: #1A1A1A;
+        --pc-surface3: #222222;
+        --pc-border: #2A2A2A;
+        --pc-text: #E8E8E8;
+        --pc-text2: #999999;
+        --pc-text3: #666666;
+    }
+
+    .chat-shell { display:flex; flex-direction:column; height:calc(100vh - 160px); min-height:520px; background:var(--pc-surface2); border:1px solid var(--pc-border); border-radius:8px; overflow:hidden; }
+    .chat-messages { flex:1; overflow-y:auto; padding:1.4rem 1.6rem; display:flex; flex-direction:column; gap:.9rem; }
+    .chat-empty { padding:3rem 1.5rem; text-align:center; color:var(--pc-text3); }
+    .chat-empty h3 { color:var(--pc-text); font-size:1.15rem; margin-bottom:.5rem; font-weight:600; }
+    .chat-empty p { font-size:.9rem; line-height:1.6; max-width:520px; margin:0 auto 1.6rem; }
+    .chat-examples { display:flex; gap:.4rem; flex-wrap:wrap; justify-content:center; max-width:640px; margin:0 auto; }
+    .chat-examples button { background:var(--pc-surface); color:var(--pc-text2); border:1px solid var(--pc-border); padding:.6rem 1rem; border-radius:5px; cursor:pointer; font-size:.8rem; transition:all .15s; }
+    .chat-examples button:hover { color:var(--pc-text); border-color:var(--pc-primary); background:var(--pc-primary-soft); }
+    .chat-msg { padding:.85rem 1.05rem; border-radius:8px; max-width:88%; font-size:.9rem; line-height:1.55; white-space:pre-wrap; word-wrap:break-word; }
+    .chat-user { background:var(--pc-primary); color:#fff; align-self:flex-end; border-bottom-right-radius:2px; }
+    .chat-assistant { background:var(--pc-surface3); color:var(--pc-text); align-self:flex-start; border-bottom-left-radius:2px; border:1px solid var(--pc-border); }
+    .chat-thinking { font-style:italic; color:var(--pc-text3); }
+    .chat-thinking::after { content:''; display:inline-block; width:3px; height:3px; border-radius:50%; background:var(--pc-text3); margin-left:.3rem; animation:chatDot 1.2s infinite; box-shadow:6px 0 0 var(--pc-text3), 12px 0 0 var(--pc-text3); }
+    @keyframes chatDot { 0%,80%,100%{opacity:.3} 40%{opacity:1} }
+    .chat-input-row { display:flex; gap:.5rem; padding:.9rem; border-top:1px solid var(--pc-border); background:var(--pc-surface); }
+    .chat-input-row textarea { flex:1; background:var(--pc-surface2); border:1px solid var(--pc-border); color:var(--pc-text); padding:.7rem .85rem; border-radius:5px; font-size:.9rem; resize:none; font-family:inherit; outline:none; transition:border-color .15s; }
+    .chat-input-row textarea:focus { border-color:var(--pc-primary); }
+    .chat-input-row button { background:var(--pc-primary); color:#fff; border:none; padding:0 1.6rem; border-radius:5px; cursor:pointer; font-size:.88rem; font-weight:600; transition:background .15s; }
+    .chat-input-row button:hover:not(:disabled) { background:#B01518; }
+    .chat-input-row button:disabled { opacity:.5; cursor:wait; }
+</style>
+
+<div class="chat-shell">
+    <div class="chat-messages" id="chatMessages">
+        <div class="chat-empty" id="chatEmpty">
+            <h3>Pergunte ao PecIA</h3>
+            <p>Sou seu assistente de pecuária. Consulto seu rebanho, índices, embriões e estoque pra responder em tempo real.</p>
+            <div class="chat-examples">
+                <button onclick="chatExemplo('Como está meu rebanho? Faça um resumo geral.')">Resumo geral</button>
+                <button onclick="chatExemplo('Quais minhas 10 melhores vacas por ICIAGen?')">Top 10 ICIAGen</button>
+                <button onclick="chatExemplo('Quantos embriões eu tenho no estoque?')">Estoque de embriões</button>
+                <button onclick="chatExemplo('Quais touros eu tenho disponíveis para venda?')">Touros à venda</button>
+            </div>
+        </div>
+    </div>
+    <div class="chat-input-row">
+        <textarea id="chatInput" placeholder="Pergunte sobre o rebanho... (Enter envia, Shift+Enter quebra linha)" rows="2"></textarea>
+        <button id="chatSend" onclick="chatEnviar()">Enviar</button>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const chatHistory = [];
+
+function chatRenderMsg(role, content) {
+    const wrap = document.getElementById('chatMessages');
+    const empty = document.getElementById('chatEmpty');
+    if (empty) empty.remove();
+    const div = document.createElement('div');
+    div.className = 'chat-msg chat-' + role;
+    div.textContent = content;
+    wrap.appendChild(div);
+    wrap.scrollTop = wrap.scrollHeight;
+    return div;
+}
+
+function chatRenderThinking() {
+    const wrap = document.getElementById('chatMessages');
+    const div = document.createElement('div');
+    div.className = 'chat-msg chat-assistant chat-thinking';
+    div.textContent = 'PecIA consultando o banco';
+    wrap.appendChild(div);
+    wrap.scrollTop = wrap.scrollHeight;
+    return div;
+}
+
+async function chatEnviar() {
+    const input = document.getElementById('chatInput');
+    const text = input.value.trim();
+    if (!text) return;
+    const sendBtn = document.getElementById('chatSend');
+
+    chatHistory.push({role: 'user', content: text});
+    chatRenderMsg('user', text);
+    input.value = '';
+    sendBtn.disabled = true;
+    const thinking = chatRenderThinking();
+
+    try {
+        const resp = await fetch('/api/pecia/chat', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({messages: chatHistory})
+        });
+        const data = await resp.json();
+        thinking.remove();
+        if (!resp.ok || data.erro) {
+            chatRenderMsg('assistant', 'Erro: ' + (data.erro || ('HTTP ' + resp.status)));
+            return;
+        }
+        chatHistory.push({role: 'assistant', content: data.reply});
+        chatRenderMsg('assistant', data.reply);
+    } catch (e) {
+        thinking.remove();
+        chatRenderMsg('assistant', 'Erro de conexão: ' + e.message);
+    } finally {
+        sendBtn.disabled = false;
+        input.focus();
+    }
+}
+
+function chatExemplo(t) {
+    document.getElementById('chatInput').value = t;
+    chatEnviar();
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    const input = document.getElementById('chatInput');
+    if (input) {
+        input.addEventListener('keydown', e => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                chatEnviar();
+            }
+        });
+        input.focus();
+    }
+});
+</script>
+{% endblock %}
