@@ -1,4 +1,5 @@
 data/fazenda167.db
+data/relatorios/
 uploads/
 .env
 __pycache__/

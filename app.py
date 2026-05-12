@@ -71,11 +71,13 @@ import xlrd
 import anthropic
 from flask import (
     Flask, render_template, request, redirect, url_for,
-    session, flash, jsonify, g, send_file, Response, after_this_request
+    session, flash, jsonify, g, send_file, send_from_directory,
+    Response, after_this_request
 )
 import tempfile
 from dotenv import load_dotenv
 from embriao_pdf import parse_fivet_pdf
+from pecia_pdf import gerar_pdf_estoque_touros, gerar_pdf_estoque_embrioes
 
 load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env'), override=True)
 
@@ -101,8 +103,10 @@ if app.secret_key == 'dev-secret-key-change-me' and not _IS_DEV:
 DATA_DIR = os.getenv('DATA_DIR') or os.path.join(os.path.dirname(__file__), 'data')
 DATABASE = os.path.join(DATA_DIR, 'fazenda167.db')
 UPLOAD_FOLDER = os.getenv('UPLOAD_FOLDER') or os.path.join(os.path.dirname(__file__), 'uploads')
+REPORTS_DIR = os.path.join(DATA_DIR, 'relatorios')
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+os.makedirs(REPORTS_DIR, exist_ok=True)
 
 
 # ── Database ────────────────────────────────────────────────────────
@@ -3818,6 +3822,37 @@ PECIA_TOOLS = [
         "name": "resumo_rebanho",
         "description": "Visão geral do rebanho na rodada mais recente: total de matrizes ativas, médias de ICIAGen/IDESM/RMAT/IPP/IEP, distribuição por categoria, totais de CEIP/genotipadas/precoces, estoque de embriões e touros à venda. Use para 'panorama geral', 'como tá meu rebanho?', 'quantas matrizes eu tenho?'.",
         "input_schema": {"type": "object", "properties": {}}
+    },
+    {
+        "name": "gerar_relatorio_pdf",
+        "description": "Gera um relatório em PDF e retorna a URL para download (não envia arquivo no chat — o link aparece como anexo). Use sempre que o usuário pedir 'PDF', 'relatório', 'exportar', 'baixar', 'imprimir'. Tipos disponíveis: 'estoque_touros' (touros à venda, paisagem) ou 'estoque_embrioes' (lotes FIV, retrato). Filtros são opcionais.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "tipo": {
+                    "type": "string",
+                    "enum": ["estoque_touros", "estoque_embrioes"],
+                    "description": "Tipo do relatório."
+                },
+                "apenas_disponiveis": {
+                    "type": "boolean",
+                    "description": "Default true. estoque_touros: só não vendidos. estoque_embrioes: só lotes com saldo > 0."
+                },
+                "filtro_grupo": {
+                    "type": "string",
+                    "description": "Só para estoque_touros: filtra por grupo/safra (busca parcial)."
+                },
+                "filtro_doadora": {
+                    "type": "string",
+                    "description": "Só para estoque_embrioes: filtra por doadora (busca parcial)."
+                },
+                "filtro_touro": {
+                    "type": "string",
+                    "description": "Só para estoque_embrioes: filtra por touro (busca parcial)."
+                }
+            },
+            "required": ["tipo"]
+        }
     }
 ]
 
@@ -4129,9 +4164,37 @@ def _pecia_execute_tool(db, name, args):
             )
         if name == "resumo_rebanho":
             return _pecia_tool_resumo_rebanho(db)
+        if name == "gerar_relatorio_pdf":
+            tipo = args.get('tipo')
+            apenas_disp = args.get('apenas_disponiveis', True)
+            logo_path = os.path.join(app.root_path, 'static', 'logo.jpg')
+            if tipo == 'estoque_touros':
+                return gerar_pdf_estoque_touros(
+                    db, REPORTS_DIR, logo_path,
+                    grupo=args.get('filtro_grupo'),
+                    apenas_disponiveis=apenas_disp,
+                )
+            if tipo == 'estoque_embrioes':
+                return gerar_pdf_estoque_embrioes(
+                    db, REPORTS_DIR, logo_path,
+                    doadora=args.get('filtro_doadora'),
+                    touro=args.get('filtro_touro'),
+                    apenas_disponiveis=apenas_disp,
+                )
+            return {"erro": f"Tipo de relatório não suportado: {tipo}"}
         return {"erro": f"Ferramenta desconhecida: {name}"}
     except Exception as e:
         return {"erro": f"Falha na ferramenta {name}: {str(e)}"}
+
+
+@app.route('/relatorios/<path:filename>')
+@login_required
+def serve_relatorio(filename):
+    """Serve PDFs gerados pela PecIA, autenticado."""
+    return send_from_directory(
+        REPORTS_DIR, filename,
+        as_attachment=False, mimetype='application/pdf'
+    )
 
 
 @app.route('/api/pecia/chat', methods=['POST'])
@@ -4164,6 +4227,7 @@ def api_pecia_chat():
     tools_with_cache[-1] = {**tools_with_cache[-1], "cache_control": {"type": "ephemeral"}}
 
     messages = list(convo)
+    attachments = []
     MAX_LOOPS = 6
     try:
         for _ in range(MAX_LOOPS):
@@ -4181,6 +4245,14 @@ def api_pecia_chat():
                 for block in response.content:
                     if block.type == "tool_use":
                         result = _pecia_execute_tool(db, block.name, block.input)
+                        if isinstance(result, dict) and result.get('pdf_url'):
+                            attachments.append({
+                                'url': result['pdf_url'],
+                                'filename': result.get('filename', 'relatorio.pdf'),
+                                'size_kb': result.get('size_kb', 0),
+                                'tipo': result.get('tipo', ''),
+                                'total_itens': result.get('total_itens', 0),
+                            })
                         tool_results.append({
                             "type": "tool_result",
                             "tool_use_id": block.id,
@@ -4196,6 +4268,7 @@ def api_pecia_chat():
             return jsonify({
                 "reply": final_text or "(sem resposta)",
                 "stop_reason": response.stop_reason,
+                "attachments": attachments,
                 "usage": {
                     "input_tokens": response.usage.input_tokens,
                     "output_tokens": response.usage.output_tokens,

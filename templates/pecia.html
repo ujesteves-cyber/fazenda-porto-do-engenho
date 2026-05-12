@@ -36,6 +36,14 @@
     .chat-input-row button { background:var(--pc-primary); color:#fff; border:none; padding:0 1.6rem; border-radius:5px; cursor:pointer; font-size:.88rem; font-weight:600; transition:background .15s; }
     .chat-input-row button:hover:not(:disabled) { background:#B01518; }
     .chat-input-row button:disabled { opacity:.5; cursor:wait; }
+
+    .chat-attach { display:flex; align-items:center; gap:.8rem; max-width:88%; align-self:flex-start; background:var(--pc-surface3); border:1px solid var(--pc-border); border-left:3px solid var(--pc-primary); border-radius:6px; padding:.7rem .9rem; text-decoration:none; color:inherit; transition:all .15s; margin-top:-.3rem; }
+    .chat-attach:hover { background:var(--pc-primary-soft); border-color:var(--pc-primary); }
+    .chat-attach-badge { background:var(--pc-primary); color:#fff; font-size:.62rem; font-weight:700; padding:.25rem .45rem; border-radius:3px; letter-spacing:.05em; flex-shrink:0; }
+    .chat-attach-body { display:flex; flex-direction:column; gap:.15rem; flex:1; min-width:0; }
+    .chat-attach-name { color:var(--pc-text); font-size:.85rem; font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .chat-attach-meta { color:var(--pc-text3); font-size:.72rem; }
+    .chat-attach-action { color:var(--pc-primary); font-size:.78rem; font-weight:600; flex-shrink:0; }
 </style>
 
 <div class="chat-shell">
@@ -62,7 +70,7 @@
 <script>
 const chatHistory = [];
 
-function chatRenderMsg(role, content) {
+function chatRenderMsg(role, content, attachments) {
     const wrap = document.getElementById('chatMessages');
     const empty = document.getElementById('chatEmpty');
     if (empty) empty.remove();
@@ -70,6 +78,38 @@ function chatRenderMsg(role, content) {
     div.className = 'chat-msg chat-' + role;
     div.textContent = content;
     wrap.appendChild(div);
+    if (attachments && attachments.length) {
+        attachments.forEach(att => {
+            const card = document.createElement('a');
+            card.className = 'chat-attach';
+            card.href = att.url;
+            card.download = att.filename || '';
+            card.target = '_blank';
+            card.rel = 'noopener';
+            const badge = document.createElement('span');
+            badge.className = 'chat-attach-badge';
+            badge.textContent = 'PDF';
+            const body = document.createElement('span');
+            body.className = 'chat-attach-body';
+            const name = document.createElement('span');
+            name.className = 'chat-attach-name';
+            name.textContent = att.filename || 'relatorio.pdf';
+            const meta = document.createElement('span');
+            meta.className = 'chat-attach-meta';
+            const sizeTxt = att.size_kb ? (att.size_kb + ' KB') : '';
+            const itensTxt = att.total_itens ? (att.total_itens + ' itens') : '';
+            meta.textContent = [itensTxt, sizeTxt].filter(Boolean).join(' · ');
+            body.appendChild(name);
+            body.appendChild(meta);
+            const action = document.createElement('span');
+            action.className = 'chat-attach-action';
+            action.textContent = 'Abrir';
+            card.appendChild(badge);
+            card.appendChild(body);
+            card.appendChild(action);
+            wrap.appendChild(card);
+        });
+    }
     wrap.scrollTop = wrap.scrollHeight;
     return div;
 }
@@ -109,7 +149,7 @@ async function chatEnviar() {
             return;
         }
         chatHistory.push({role: 'assistant', content: data.reply});
-        chatRenderMsg('assistant', data.reply);
+        chatRenderMsg('assistant', data.reply, data.attachments);
     } catch (e) {
         thinking.remove();
         chatRenderMsg('assistant', 'Erro de conexão: ' + e.message);
